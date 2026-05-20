@@ -1,0 +1,58 @@
+# ---------------- Build output ----------------
+build/
+build-*/
+out/
+cmake-build-*/
+
+# CMake artifacts (in case someone configures in-tree)
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CMakeUserPresets.json
+CTestTestfile.cmake
+Makefile
+compile_commands.json
+*.cmake
+
+# Compiled binaries / object / archive files
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+
+# Metal intermediate artifacts (if AOT compilation is ever re-enabled)
+*.air
+*.metallib
+*.metalar
+
+# ---------------- macOS ----------------
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# ---------------- Editors / IDEs ----------------
+.vscode/
+.idea/
+.vs/
+*.xcodeproj/
+*.xcworkspace/
+.cache/
+.clangd/
+.ccls-cache/
+
+# ---------------- Misc ----------------
+*.log
+*.swp
+*.swo
+*~
+
+# Downloaded SDK zips (we already extracted what we need under external/)
+LearnMetalCPP.zip
+metal-cpp_*.zip
