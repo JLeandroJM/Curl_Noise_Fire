@@ -56,3 +56,5 @@ compile_commands.json
 # Downloaded SDK zips (we already extracted what we need under external/)
 LearnMetalCPP.zip
 metal-cpp_*.zip
+
+video
