@@ -1,115 +1,302 @@
-#include "ParticleSystem.hpp"
+#include "ParticleSystem.h"
+#include <iostream>
 
-#include "MetalContext.hpp"
-
-#include <cstdio>
-#include <cstring>
-#include <random>
-
-ParticleSystem::ParticleSystem(MetalContext& ctx, uint32_t particleCount)
-    : ctx_(ctx), count_(particleCount) {}
+ParticleSystem::ParticleSystem() {}
 
 ParticleSystem::~ParticleSystem() {
-    if (updatePipeline_) updatePipeline_->release();
-    if (particleBuffer_) particleBuffer_->release();
+    cleanup();
 }
 
-bool ParticleSystem::init() {
-    MTL::Device*  device = ctx_.device();
-    MTL::Library* lib    = ctx_.library();
-    if (!device || !lib) return false;
+void ParticleSystem::init(const std::vector<Particle>& initialParticles,
+                          const std::vector<EmitterConfig>& emitters,
+                          const std::string& shaderDir) {
+    maxParticles = static_cast<uint32_t>(initialParticles.size());
+    activeParticles = maxParticles;
+    numEmitters = static_cast<uint32_t>(emitters.size());
 
-    NS::String* fnName =
-        NS::String::string("update_particles", NS::UTF8StringEncoding);
-    MTL::Function* fn = lib->newFunction(fnName);
-    if (!fn) {
-        std::fprintf(stderr, "Could not find kernel 'update_particles'\n");
-        return false;
-    }
+    createSSBO(initialParticles);
+    createEmitterSSBO(emitters);
+    setupVAO();
+    loadShaders(shaderDir);
 
-    NS::Error* err = nullptr;
-    updatePipeline_ = device->newComputePipelineState(fn, &err);
-    fn->release();
-    if (!updatePipeline_) {
-        std::fprintf(stderr, "Compute pipeline build failed: %s\n",
-                     err ? err->localizedDescription()->utf8String()
-                         : "(no error info)");
-        return false;
-    }
+    glGenBuffers(1, &atomicBuffer);
+    glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, atomicBuffer);
 
-    threadgroupSize_ = updatePipeline_->maxTotalThreadsPerThreadgroup();
-    if (threadgroupSize_ > 256) threadgroupSize_ = 256;
+    GLuint zero = 0;
+    glBufferData(GL_ATOMIC_COUNTER_BUFFER, sizeof(GLuint), &zero, GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_ATOMIC_COUNTER_BUFFER, 0, atomicBuffer);
 
-    initParticleBuffer();
-    return particleBuffer_ != nullptr;
+    glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, 0);
 }
 
-void ParticleSystem::initParticleBuffer() {
-    const size_t bytes = sizeof(Particle) * count_;
-    particleBuffer_ = ctx_.device()->newBuffer(
-        bytes, MTL::ResourceStorageModeShared);
-    if (!particleBuffer_) {
-        std::fprintf(stderr, "Particle buffer allocation failed (%zu B)\n",
-                     bytes);
+void ParticleSystem::cleanup() {
+    if (particleSSBO) {
+        glDeleteBuffers(1, &particleSSBO);
+    }
+
+    if (emitterSSBO) {
+        glDeleteBuffers(1, &emitterSSBO);
+    }
+
+    if (atomicBuffer) {
+        glDeleteBuffers(1, &atomicBuffer);
+    }
+
+    if (particleVAO) {
+        glDeleteVertexArrays(1, &particleVAO);
+    }
+
+    particleSSBO = 0;
+    emitterSSBO = 0;
+    atomicBuffer = 0;
+    particleVAO = 0;
+}
+
+void ParticleSystem::createSSBO(const std::vector<Particle>& particles) {
+    glGenBuffers(1, &particleSSBO);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleSSBO);
+
+    glBufferData(
+        GL_SHADER_STORAGE_BUFFER,
+        particles.size() * sizeof(Particle),
+        particles.data(),
+        GL_DYNAMIC_DRAW
+    );
+
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, particleSSBO);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+}
+
+void ParticleSystem::createEmitterSSBO(const std::vector<EmitterConfig>& emitters) {
+    std::vector<GPUEmitter> gpuEmitters;
+    gpuEmitters.reserve(emitters.size());
+
+    for (const auto& em : emitters) {
+        GPUEmitter gpuEm{};
+
+        gpuEm.positionAndShape = glm::vec4(
+            em.position,
+            static_cast<float>(em.shape)
+        );
+
+        gpuEm.directionAndRate = glm::vec4(
+            em.direction,
+            em.emitRate
+        );
+
+        gpuEm.dimensions = glm::vec4(
+            em.width,
+            em.height,
+            em.radius,
+            em.particleLife
+        );
+
+        gpuEm.speedAndTemp = glm::vec4(
+            em.initialSpeed,
+            em.speedVariance,
+            em.temperature,
+            em.particleSize
+        );
+
+        gpuEmitters.push_back(gpuEm);
+    }
+
+    glGenBuffers(1, &emitterSSBO);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, emitterSSBO);
+
+    size_t bufferSize = gpuEmitters.empty()
+        ? sizeof(GPUEmitter)
+        : gpuEmitters.size() * sizeof(GPUEmitter);
+
+    const void* data = gpuEmitters.empty()
+        ? nullptr
+        : gpuEmitters.data();
+
+    glBufferData(
+        GL_SHADER_STORAGE_BUFFER,
+        bufferSize,
+        data,
+        GL_STATIC_DRAW
+    );
+
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, emitterSSBO);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+}
+
+void ParticleSystem::setupVAO() {
+    glGenVertexArrays(1, &particleVAO);
+    glBindVertexArray(particleVAO);
+    glBindVertexArray(0);
+}
+
+void ParticleSystem::loadShaders(const std::string& shaderDir) {
+    std::string vert = shaderDir + "/particle.vert";
+    std::string geom = shaderDir + "/particle.geom";
+    std::string frag = shaderDir + "/particle.frag";
+
+    if (!renderShader.loadGraphics(vert, frag, geom)) {
+        std::cerr << "Fallo al cargar shaders de renderizado de partículas.\n";
+    }
+
+    if (!updateShader.loadCompute(shaderDir + "/particle_update.comp")) {
+        std::cerr << "Fallo al cargar shader compute particle_update.comp\n";
+    }
+
+    if (!emitShader.loadCompute(shaderDir + "/particle_emit.comp")) {
+        std::cerr << "Fallo al cargar shader compute particle_emit.comp\n";
+    }
+}
+
+void ParticleSystem::setCurlNoiseParams(const CurlNoiseParams& params) {
+    curlParams = params;
+}
+
+void ParticleSystem::setWind(const glm::vec3& dir, float strength) {
+    if (glm::length(dir) > 0.0001f) {
+        windDirection = glm::normalize(dir);
+    } else {
+        windDirection = glm::vec3(0.0f);
+    }
+
+    windStrength = strength;
+}
+
+void ParticleSystem::setComputeUniforms(Shader& shader, float deltaTime, float currentTime) {
+    shader.use();
+
+    // Nombres usados por particle_update.comp actual.
+    shader.setFloat("deltaTime", deltaTime);
+    shader.setFloat("currentTime", currentTime);
+    shader.setVec3("gravity", gravity);
+    shader.setFloat("buoyancyStrength", buoyancyStrength);
+    shader.setVec3("windDirection", windDirection);
+    shader.setFloat("windStrength", windStrength);
+
+    // Nombres alternativos por si algún shader viejo sigue con prefijo u_.
+    shader.setFloat("u_deltaTime", deltaTime);
+    shader.setFloat("u_time", currentTime);
+    shader.setUint("u_maxParticles", maxParticles);
+    shader.setVec3("u_gravity", gravity);
+    shader.setFloat("u_buoyancy", buoyancyStrength);
+    shader.setVec3("u_windDir", windDirection);
+    shader.setFloat("u_windStrength", windStrength);
+
+    // Uniforms reales de curl_noise.glsl.
+    shader.setFloat("u_curlFrequency", curlParams.frequency);
+    shader.setFloat("u_curlAmplitude", curlParams.amplitude);
+    shader.setInt("u_curlOctaves", curlParams.octaves);
+    shader.setFloat("u_curlLacunarity", curlParams.lacunarity);
+    shader.setFloat("u_curlPersistence", curlParams.persistence);
+    shader.setFloat("u_curlTimeScale", curlParams.timeScale);
+    shader.setFloat("u_curlEpsilon", curlParams.epsilon);
+
+    // Alias viejos por compatibilidad.
+    shader.setFloat("u_curlFreq", curlParams.frequency);
+    shader.setFloat("u_curlAmp", curlParams.amplitude);
+}
+
+void ParticleSystem::dispatchUpdateCompute(float deltaTime, float currentTime) {
+    if (maxParticles == 0) {
         return;
     }
 
-    // Seed every particle with a random staggered age so the system reaches
-    // steady-state immediately instead of all spawning at once. The actual
-    // respawn logic lives in the kernel.
-    Particle* p = reinterpret_cast<Particle*>(particleBuffer_->contents());
+    setComputeUniforms(updateShader, deltaTime, currentTime);
 
-    std::mt19937 rng(0xC0FFEEu);
-    std::uniform_real_distribution<float> u01(0.0f, 1.0f);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, particleSSBO);
 
-    for (uint32_t i = 0; i < count_; ++i) {
-        const float life = lifetimeMin + u01(rng) * (lifetimeMax - lifetimeMin);
-        p[i].position[0] = emitterPos[0];
-        p[i].position[1] = emitterPos[1];
-        p[i].position[2] = emitterPos[2];
-        p[i].age         = u01(rng) * life;   // staggered start
-        p[i].velocity[0] = 0.0f;
-        p[i].velocity[1] = 0.0f;
-        p[i].velocity[2] = 0.0f;
-        p[i].lifetime    = life;
-        p[i].size        = sizeMin + u01(rng) * (sizeMax - sizeMin);
-        p[i].seed        = u01(rng) * 1.0e4f + static_cast<float>(i);
-        p[i]._pad0       = 0.0f;
-        p[i]._pad1       = 0.0f;
-    }
+    GLuint numGroups = (maxParticles + 255) / 256;
+
+    glDispatchCompute(numGroups, 1, 1);
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT);
 }
 
-void ParticleSystem::encodeUpdate(MTL::CommandBuffer* cmd, float dt,
-                                  float time, uint32_t frameIndex) {
-    SimUniforms u{};
-    u.dt             = dt;
-    u.time           = time;
-    u.frameIndex     = frameIndex;
-    u.particleCount  = count_;
-    u.emitterPos[0]  = emitterPos[0];
-    u.emitterPos[1]  = emitterPos[1];
-    u.emitterPos[2]  = emitterPos[2];
-    u.emitVelMin     = emitVelMin;
-    u.emitVelMax     = emitVelMax;
-    u.emitRadius     = emitRadius;
-    u.buoyancy       = buoyancy;
-    u.curlScale      = curlScale;
-    u.curlStrength   = curlStrength;
-    u.lifetimeMin    = lifetimeMin;
-    u.lifetimeMax    = lifetimeMax;
-    u.sizeMin        = sizeMin;
-    u.sizeMax        = sizeMax;
+void ParticleSystem::dispatchEmitCompute(float deltaTime, float currentTime) {
+    if (numEmitters == 0 || maxParticles == 0) {
+        return;
+    }
 
-    MTL::ComputeCommandEncoder* enc = cmd->computeCommandEncoder();
-    enc->setComputePipelineState(updatePipeline_);
-    enc->setBuffer(particleBuffer_, 0, 0);
-    enc->setBytes(&u, sizeof(u), 1);
+    emitShader.use();
 
-    const NS::UInteger total = count_;
-    const NS::UInteger tg    = threadgroupSize_;
-    const NS::UInteger groups = (total + tg - 1) / tg;
+    // Para el particle_emit.comp nuevo.
+    emitShader.setFloat("u_deltaTime", deltaTime);
+    emitShader.setFloat("u_time", currentTime);
+    emitShader.setUint("u_maxParticles", maxParticles);
+    emitShader.setUint("u_numEmitters", numEmitters);
 
-    enc->dispatchThreadgroups(MTL::Size(groups, 1, 1),
-                              MTL::Size(tg, 1, 1));
-    enc->endEncoding();
+    // Para el particle_emit.comp viejo.
+    emitShader.setFloat("deltaTime", deltaTime);
+    emitShader.setFloat("currentTime", currentTime);
+    emitShader.setUint("numEmitters", numEmitters);
+
+    // Emitimos como máximo una parte del pool por frame.
+    // Si esto queda muy bajo, no aparece fuego; si queda muy alto, explota la escena.
+    GLuint maxEmitThisFrame = std::max<GLuint>(256, maxParticles / 20);
+    emitShader.setUint("maxParticlesToEmitThisFrame", maxEmitThisFrame);
+
+    // Reset atomic counter para shaders que usan atomic_uint.
+    if (atomicBuffer) {
+        GLuint zero = 0;
+        glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, atomicBuffer);
+        glBufferSubData(GL_ATOMIC_COUNTER_BUFFER, 0, sizeof(GLuint), &zero);
+        glBindBufferBase(GL_ATOMIC_COUNTER_BUFFER, 0, atomicBuffer);
+    }
+
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, particleSSBO);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, emitterSSBO);
+
+    // En vez de numEmitters, recorremos todo el pool.
+    // Así cada hilo puede intentar reciclar una partícula muerta.
+    GLuint numGroups = (maxParticles + 255) / 256;
+
+    glDispatchCompute(numGroups, 1, 1);
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT);
+}
+
+void ParticleSystem::update(float deltaTime, float currentTime) {
+    dispatchUpdateCompute(deltaTime, currentTime);
+    dispatchEmitCompute(deltaTime, currentTime);
+}
+
+void ParticleSystem::render(const Camera& camera, float aspectRatio) {
+    if (maxParticles == 0) {
+        return;
+    }
+
+    renderShader.use();
+
+    glm::mat4 view = camera.getViewMatrix();
+    glm::mat4 proj = camera.getProjectionMatrix(aspectRatio);
+    glm::vec3 camRight = camera.getRight();
+    glm::vec3 camUp = camera.getUp();
+
+    // Nombres reales usados por particle.geom.
+    renderShader.setMat4("view", view);
+    renderShader.setMat4("projection", proj);
+    renderShader.setVec3("cameraRight", camRight);
+    renderShader.setVec3("cameraUp", camUp);
+
+    // Alias viejos por compatibilidad.
+    renderShader.setMat4("u_view", view);
+    renderShader.setMat4("u_projection", proj);
+    renderShader.setVec3("u_cameraRight", camRight);
+    renderShader.setVec3("u_cameraUp", camUp);
+
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, particleSSBO);
+
+    glBindVertexArray(particleVAO);
+
+    glEnable(GL_BLEND);
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    glDrawArrays(GL_POINTS, 0, maxParticles);
+
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+
+    glBindVertexArray(0);
 }

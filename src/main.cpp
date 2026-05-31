@@ -1,161 +1,397 @@
-// Pure-C++ entry point. AppKit / MetalKit access happens through metal-cpp's
-// extension headers (no Objective-C source files in this project).
+#ifndef GLFW_INCLUDE_NONE
+#define GLFW_INCLUDE_NONE
+#endif
 
-#include <AppKit/AppKit.hpp>
-#include <Foundation/Foundation.hpp>
-#include <Metal/Metal.hpp>
-#include <MetalKit/MetalKit.hpp>
-#include <QuartzCore/QuartzCore.hpp>
+#include <glad/gl.h>
+#include <GLFW/glfw3.h>
 
-#include <cstdio>
-#include <cstdlib>
+#include <glm/glm.hpp>
+
+#include <algorithm>
+#include <cctype>
+#include <iostream>
+#include <stdexcept>
 #include <string>
 
-#include "MetalContext.hpp"
-#include "ParticleSystem.hpp"
-#include "Renderer.hpp"
+#include "Renderer.h"
+#include "SceneManager.h"
+#include "ParticleSystem.h"
+#include "Camera.h"
+#include "FrameExporter.h"
 
-// ===========================================================================
-//                           PROJECT-WIDE PARAMETERS
-// Tweak these and recompile. (No ImGui at this stage by design.)
-// ===========================================================================
-namespace cfg {
-constexpr uint32_t kParticleCount = 100'000;
-constexpr int      kWindowWidth   = 1280;
-constexpr int      kWindowHeight  = 720;
-constexpr int      kTargetFPS     = 60;
+std::string toLower(std::string s) {
+    std::transform(
+        s.begin(),
+        s.end(),
+        s.begin(),
+        [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        }
+    );
+
+    return s;
 }
 
-// ---------------------------------------------------------------------------
-//                           NSApplication delegate
-// Owns the window, the MTKView, and the renderer. metal-cpp routes the
-// NSApplicationDelegate selectors through NS::ApplicationDelegate's virtuals.
-// ---------------------------------------------------------------------------
-class FireAppDelegate : public NS::ApplicationDelegate {
-public:
-    ~FireAppDelegate() override {
-        delete renderer_;
-        delete particles_;
-        delete metal_;
-        if (view_)   view_->release();
-        if (window_) window_->release();
+int parseSceneArgument(const std::string& value) {
+    try {
+        size_t parsedChars = 0;
+        int sceneIndex = std::stoi(value, &parsedChars);
+
+        if (parsedChars == value.size()) {
+            return sceneIndex;
+        }
+    } catch (...) {
+        // Si no es número, probamos por nombre.
     }
 
-    void applicationWillFinishLaunching(NS::Notification*) override {
-        // Build the application menu so cmd-Q etc. work properly. (Without
-        // this, the launched app has no menu bar and feels broken.)
-        NS::Application* app = reinterpret_cast<NS::Application*>(
-            NS::Application::sharedApplication());
+    std::string name = toLower(value);
 
-        NS::Menu*     mainMenu = NS::Menu::alloc()->init();
-        NS::MenuItem* appItem  = NS::MenuItem::alloc()->init();
-
-        NS::Menu* appMenu = NS::Menu::alloc()->init(
-            NS::String::string("Fire", NS::UTF8StringEncoding));
-
-        NS::String* quitTitle =
-            NS::String::string("Quit Fire", NS::UTF8StringEncoding);
-        NS::String* quitKey =
-            NS::String::string("q", NS::UTF8StringEncoding);
-        SEL quitSel = sel_registerName("terminate:");
-
-        NS::MenuItem* quitItem =
-            appMenu->addItem(quitTitle, quitSel, quitKey);
-        quitItem->setKeyEquivalentModifierMask(NS::EventModifierFlagCommand);
-
-        appItem->setSubmenu(appMenu);
-        mainMenu->addItem(appItem);
-        app->setMainMenu(mainMenu);
-
-        appMenu->release();
-        appItem->release();
-        mainMenu->release();
+    if (name == "paperfire" || name == "paper" || name == "papel") {
+        return 0;
     }
 
-    void applicationDidFinishLaunching(NS::Notification*) override {
-        // ---------------- Metal context + shader library ----------------
-        metal_ = new MetalContext();
-        if (!metal_->device()) {
-            std::fprintf(stderr, "No Metal device. Exiting.\n");
-            std::exit(1);
-        }
-        if (!metal_->loadShaderSource(FIRE_SHADER_PATH)) {
-            std::exit(1);
-        }
-        std::fprintf(stderr, "Metal device: %s\n",
-                     metal_->device()->name()->utf8String());
-
-        // ---------------- Particle system + renderer ----------------
-        particles_ = new ParticleSystem(*metal_, cfg::kParticleCount);
-        if (!particles_->init()) {
-            std::fprintf(stderr, "Particle system init failed.\n");
-            std::exit(1);
-        }
-
-        renderer_ = new Renderer(*metal_, *particles_);
-
-        // ---------------- Window + MTKView ----------------
-        CGRect frame = (CGRect){ {100, 100},
-                                 {(CGFloat)cfg::kWindowWidth,
-                                  (CGFloat)cfg::kWindowHeight} };
-
-        window_ = NS::Window::alloc()->init(
-            frame,
-            NS::WindowStyleMaskTitled
-                | NS::WindowStyleMaskClosable
-                | NS::WindowStyleMaskResizable
-                | NS::WindowStyleMaskMiniaturizable,
-            NS::BackingStoreBuffered,
-            false);
-        window_->setTitle(NS::String::string("Curl-Noise Fire",
-                                             NS::UTF8StringEncoding));
-
-        view_ = MTK::View::alloc()->init(frame, metal_->device());
-        view_->setColorPixelFormat(MTL::PixelFormatBGRA8Unorm);
-        view_->setClearColor(MTL::ClearColor::Make(0.0, 0.0, 0.0, 1.0));
-        view_->setPreferredFramesPerSecond(cfg::kTargetFPS);
-
-        if (!renderer_->init(view_->colorPixelFormat())) {
-            std::fprintf(stderr, "Renderer init failed.\n");
-            std::exit(1);
-        }
-
-        const float aspect = float(cfg::kWindowWidth) / float(cfg::kWindowHeight);
-        renderer_->setAspect(aspect);
-        view_->setDelegate(renderer_);
-
-        window_->setContentView(reinterpret_cast<NS::View*>(view_));
-        window_->makeKeyAndOrderFront(nullptr);
-
-        NS::Application* app = reinterpret_cast<NS::Application*>(
-            NS::Application::sharedApplication());
-        app->activateIgnoringOtherApps(true);
+    if (name == "wallfire" || name == "wall" || name == "pared") {
+        return 1;
     }
 
-    bool applicationShouldTerminateAfterLastWindowClosed(NS::Application*) override {
-        return true;
+    if (name == "treefire" || name == "tree" || name == "arbol" || name == "árbol") {
+        return 2;
     }
 
-private:
-    MetalContext*   metal_     = nullptr;
-    ParticleSystem* particles_ = nullptr;
-    Renderer*       renderer_  = nullptr;
-    NS::Window*     window_    = nullptr;
-    MTK::View*      view_      = nullptr;
-};
+    if (name == "structuralfire" || name == "structural" || name == "estructura") {
+        return 3;
+    }
 
-// ---------------------------------------------------------------------------
+    if (name == "buildingfire" || name == "building" || name == "edificio" || name == "utec") {
+        return 4;
+    }
 
-int main(int, const char* []) {
-    NS::AutoreleasePool* pool = NS::AutoreleasePool::alloc()->init();
+    std::cerr << "Escena no reconocida: " << value << std::endl;
+    std::cerr << "Usando escena 0 por defecto.\n";
 
-    FireAppDelegate delegate;
+    return 0;
+}
 
-    NS::Application* app = NS::Application::sharedApplication();
-    app->setDelegate(&delegate);
-    app->setActivationPolicy(NS::ActivationPolicyRegular);
-    app->run();
+void printUsage() {
+    std::cout << "\nUso:\n";
+    std::cout << "  FireSimulation.exe --scene 0 --preview --lightweight\n";
+    std::cout << "  FireSimulation.exe --scene PaperFire --preview --lightweight\n";
+    std::cout << "  FireSimulation.exe --scene BuildingFire --preview --lightweight\n\n";
 
-    pool->release();
+    std::cout << "Escenas:\n";
+    std::cout << "  0 / PaperFire      = fuego sobre papel / fogata simple\n";
+    std::cout << "  1 / WallFire       = fuego sobre pared\n";
+    std::cout << "  2 / TreeFire       = fuego en arbol\n";
+    std::cout << "  3 / StructuralFire = fuego estructural\n";
+    std::cout << "  4 / BuildingFire   = fuego en edificio\n\n";
+
+    std::cout << "Opciones:\n";
+    std::cout << "  --preview       Ventana 1280x720\n";
+    std::cout << "  --lightweight   Menos carga para GPU modesta\n";
+    std::cout << "  --export        Exporta video/frames segun soporte\n";
+    std::cout << "  --help          Muestra esta ayuda\n\n";
+}
+
+void glfwErrorCallback(int error, const char* description) {
+    std::cerr << "GLFW Error [" << error << "]: " << description << std::endl;
+}
+
+void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
+    if (width <= 0 || height <= 0) {
+        return;
+    }
+
+    glViewport(0, 0, width, height);
+
+    auto renderer = reinterpret_cast<Renderer*>(glfwGetWindowUserPointer(window));
+
+    if (renderer) {
+        renderer->resize(width, height);
+    }
+}
+
+void processInput(GLFWwindow* window) {
+    if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
+        glfwSetWindowShouldClose(window, true);
+    }
+}
+
+void printOpenGLInfo() {
+    const GLubyte* version = glGetString(GL_VERSION);
+    const GLubyte* renderer = glGetString(GL_RENDERER);
+    const GLubyte* vendor = glGetString(GL_VENDOR);
+
+    std::cout << "\n========== OPENGL INFO ==========\n";
+    std::cout << "OpenGL Version: "
+              << (version ? reinterpret_cast<const char*>(version) : "NULL")
+              << "\n";
+
+    std::cout << "Renderer: "
+              << (renderer ? reinterpret_cast<const char*>(renderer) : "NULL")
+              << "\n";
+
+    std::cout << "Vendor: "
+              << (vendor ? reinterpret_cast<const char*>(vendor) : "NULL")
+              << "\n";
+
+    GLint maxComputeWorkGroupCountX = 0;
+    GLint maxComputeWorkGroupSizeX = 0;
+
+    glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_COUNT, 0, &maxComputeWorkGroupCountX);
+    glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_SIZE, 0, &maxComputeWorkGroupSizeX);
+
+    std::cout << "Max compute work groups X: " << maxComputeWorkGroupCountX << "\n";
+    std::cout << "Max compute work group size X: " << maxComputeWorkGroupSizeX << "\n";
+    std::cout << "=================================\n\n";
+}
+
+void drawDebugRedRectangle(int windowWidth, int windowHeight) {
+    // Este bloque dibuja un rectángulo rojo directamente sobre el framebuffer principal.
+    // Si esto aparece, la ventana y glfwSwapBuffers funcionan.
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, windowWidth, windowHeight);
+
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+
+    glEnable(GL_SCISSOR_TEST);
+
+    // Coordenadas desde abajo-izquierda.
+    glScissor(30, 30, 260, 130);
+
+    glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glDisable(GL_SCISSOR_TEST);
+}
+
+void checkOpenGLError(const std::string& where) {
+    GLenum err = glGetError();
+
+    if (err != GL_NO_ERROR) {
+        std::cerr << "OpenGL error en " << where << ": 0x"
+                  << std::hex << err << std::dec << std::endl;
+    }
+}
+
+int main(int argc, char** argv) {
+    int initialScene = 0;
+    bool lightweight = false;
+    bool exportVideo = false;
+    bool previewMode = false;
+
+    int windowWidth = 1920;
+    int windowHeight = 1080;
+
+    // Cambia esto a false cuando ya confirmemos que el render funciona.
+    bool debugRedRectangle = true;
+
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+
+        if (arg == "--help" || arg == "-h") {
+            printUsage();
+            return 0;
+        }
+
+        if (arg == "--scene" && i + 1 < argc) {
+            initialScene = parseSceneArgument(argv[++i]);
+        } else if (arg == "--lightweight") {
+            lightweight = true;
+        } else if (arg == "--export") {
+            exportVideo = true;
+        } else if (arg == "--preview") {
+            previewMode = true;
+            windowWidth = 1280;
+            windowHeight = 720;
+        } else if (arg == "--no-debug-red") {
+            debugRedRectangle = false;
+        } else {
+            std::cerr << "Argumento desconocido: " << arg << std::endl;
+        }
+    }
+
+    std::cout << "========== CONFIG ==========\n";
+    std::cout << "Scene index: " << initialScene << "\n";
+    std::cout << "Preview: " << (previewMode ? "true" : "false") << "\n";
+    std::cout << "Lightweight: " << (lightweight ? "true" : "false") << "\n";
+    std::cout << "Export: " << (exportVideo ? "true" : "false") << "\n";
+    std::cout << "Debug red rectangle: " << (debugRedRectangle ? "true" : "false") << "\n";
+    std::cout << "Resolution: " << windowWidth << "x" << windowHeight << "\n";
+    std::cout << "============================\n\n";
+
+    glfwSetErrorCallback(glfwErrorCallback);
+
+    if (!glfwInit()) {
+        std::cerr << "Fallo al inicializar GLFW.\n";
+        return -1;
+    }
+
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+
+    GLFWwindow* window = glfwCreateWindow(
+        windowWidth,
+        windowHeight,
+        "Simulacion de Fuego - Curl Noise",
+        nullptr,
+        nullptr
+    );
+
+    if (!window) {
+        std::cerr << "Fallo al crear la ventana GLFW.\n";
+        glfwTerminate();
+        return -1;
+    }
+
+    glfwMakeContextCurrent(window);
+    glfwSwapInterval(1);
+
+    if (!gladLoadGL((GLADloadfunc)glfwGetProcAddress)) {
+        std::cerr << "Fallo al inicializar GLAD.\n";
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return -1;
+    }
+
+    printOpenGLInfo();
+
+    glViewport(0, 0, windowWidth, windowHeight);
+
+    // Test inicial: limpia a gris oscuro antes de inicializar renderer.
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glClearColor(0.08f, 0.08f, 0.10f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glfwSwapBuffers(window);
+    glfwPollEvents();
+
+    Renderer renderer;
+
+    std::cout << "Inicializando Renderer...\n";
+    renderer.init(windowWidth, windowHeight, "shaders");
+    checkOpenGLError("renderer.init");
+
+    glfwSetWindowUserPointer(window, &renderer);
+    glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
+
+    SceneManager sceneManager;
+    sceneManager.init();
+
+    ParticleSystem particleSystem;
+    Camera camera;
+
+    std::cout << "Cargando escena " << initialScene << "...\n";
+
+    if (!sceneManager.loadScene(initialScene, particleSystem, camera, lightweight)) {
+        std::cerr << "No se pudo cargar la escena inicial " << initialScene << ".\n";
+        std::cerr << "Intentando cargar escena 0...\n";
+
+        if (!sceneManager.loadScene(0, particleSystem, camera, lightweight)) {
+            std::cerr << "Tampoco se pudo cargar la escena 0. Abortando.\n";
+            glfwDestroyWindow(window);
+            glfwTerminate();
+            return -1;
+        }
+
+        initialScene = 0;
+    }
+
+    float sceneDuration = sceneManager.getCurrentSceneDuration();
+    glm::vec3 initialBg = sceneManager.getBackgroundColor();
+
+    std::cout << "Escena cargada correctamente.\n";
+    std::cout << "Duracion escena: " << sceneDuration << " segundos\n";
+    std::cout << "Background color: "
+              << initialBg.r << ", "
+              << initialBg.g << ", "
+              << initialBg.b << "\n\n";
+
+    FrameExporter exporter;
+
+    if (exportVideo) {
+        std::string outputName = "output_scene" + std::to_string(initialScene) + ".mp4";
+
+        std::cout << "Inicializando exportador: " << outputName << "\n";
+        exporter.initVideoWriter(outputName, windowWidth, windowHeight, 30.0);
+    }
+
+    float lastFrame = static_cast<float>(glfwGetTime());
+    float simulatedTime = 0.0f;
+    float dtFixed = 1.0f / 30.0f;
+
+    int frameCount = 0;
+    float fpsTimer = 0.0f;
+
+    std::cout << "Entrando al loop principal...\n";
+    std::cout << "Presiona ESC para cerrar.\n\n";
+
+    while (!glfwWindowShouldClose(window)) {
+        processInput(window);
+
+        float currentRealTime = static_cast<float>(glfwGetTime());
+        float deltaTime = currentRealTime - lastFrame;
+        lastFrame = currentRealTime;
+
+        if (deltaTime > 0.1f) {
+            deltaTime = 0.1f;
+        }
+
+        float dt = exportVideo ? dtFixed : deltaTime;
+
+        camera.update(simulatedTime);
+        particleSystem.update(dt, simulatedTime);
+        checkOpenGLError("particleSystem.update");
+
+        glm::vec3 bgColor = sceneManager.getBackgroundColor();
+
+        renderer.renderFrame(particleSystem, camera, bgColor);
+        checkOpenGLError("renderer.renderFrame");
+
+        if (debugRedRectangle) {
+            drawDebugRedRectangle(windowWidth, windowHeight);
+            checkOpenGLError("drawDebugRedRectangle");
+        }
+
+        if (exportVideo) {
+            exporter.addFrame(windowWidth, windowHeight);
+
+            if (simulatedTime >= sceneDuration) {
+                std::cout << "Tiempo de escena completado. Cerrando export.\n";
+                break;
+            }
+        }
+
+        glfwSwapBuffers(window);
+        glfwPollEvents();
+
+        simulatedTime += dt;
+
+        frameCount++;
+        fpsTimer += deltaTime;
+
+        if (fpsTimer >= 1.0f) {
+            float fps = static_cast<float>(frameCount) / fpsTimer;
+
+            std::cout << "FPS: " << fps
+                      << " | t: " << simulatedTime
+                      << " | scene: " << initialScene
+                      << std::endl;
+
+            frameCount = 0;
+            fpsTimer = 0.0f;
+        }
+    }
+
+    if (exportVideo) {
+        exporter.finish();
+        std::cout << "Export finalizado.\n";
+    }
+
+    std::cout << "Cerrando aplicacion.\n";
+
+    glfwDestroyWindow(window);
+    glfwTerminate();
+
     return 0;
 }

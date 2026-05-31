@@ -1,41 +1,70 @@
-#include "Camera.hpp"
+#include "Camera.h"
+#include <glm/gtx/compatibility.hpp> // For lerp
+#include <algorithm>
 
-#include <glm/gtc/matrix_transform.hpp>
-
-// Metal NDC is z in [0, 1] (same convention as Vulkan / D3D). GLM exposes
-// this through GLM_FORCE_DEPTH_ZERO_TO_ONE, but we keep the GLM defaults and
-// just compose the projection manually to keep the depth range correct.
-namespace {
-glm::mat4 perspectiveMetal(float fovY, float aspect, float zNear, float zFar) {
-    const float f = 1.0f / std::tan(fovY * 0.5f);
-    glm::mat4 m(0.0f);
-    m[0][0] = f / aspect;
-    m[1][1] = f;
-    m[2][2] = zFar / (zNear - zFar);
-    m[2][3] = -1.0f;
-    m[3][2] = (zNear * zFar) / (zNear - zFar);
-    return m;
-}
+Camera::Camera() {
+    // Default keyframe if path is empty
+    currentPath.keyframes.push_back({0.0f, position, target});
 }
 
-Camera::Camera(glm::vec3 eye, glm::vec3 target, glm::vec3 up,
-               float fovYRadians, float aspect, float zNear, float zFar)
-    : eye_(eye), target_(target), up_(up),
-      fovY_(fovYRadians), aspect_(aspect), near_(zNear), far_(zFar) {}
-
-glm::mat4 Camera::viewProj() const {
-    glm::mat4 view = glm::lookAt(eye_, target_, up_);
-    glm::mat4 proj = perspectiveMetal(fovY_, aspect_, near_, far_);
-    return proj * view;
+void Camera::setPath(const CameraPath& path) {
+    currentPath = path;
+    if (!currentPath.keyframes.empty()) {
+        position = currentPath.keyframes.front().position;
+        target = currentPath.keyframes.front().target;
+    }
 }
 
-glm::vec3 Camera::cameraRight() const {
-    glm::vec3 fwd = glm::normalize(target_ - eye_);
-    return glm::normalize(glm::cross(fwd, up_));
+void Camera::update(float currentTime) {
+    if (currentPath.keyframes.empty()) return;
+
+    // Animación cíclica
+    float t = std::fmod(currentTime, currentPath.totalDuration);
+    if (t < 0.0f) t += currentPath.totalDuration;
+
+    // Encontrar los keyframes entre los cuales interpolar
+    auto it = std::lower_bound(currentPath.keyframes.begin(), currentPath.keyframes.end(), t,
+        [](const CameraKeyframe& kf, float time) {
+            return kf.time < time;
+        });
+
+    if (it == currentPath.keyframes.end()) {
+        // Después del último keyframe (no debería pasar con fmod si max time == totalDuration, pero por si acaso)
+        position = currentPath.keyframes.back().position;
+        target = currentPath.keyframes.back().target;
+    } else if (it == currentPath.keyframes.begin()) {
+        // Antes del primer keyframe
+        position = currentPath.keyframes.front().position;
+        target = currentPath.keyframes.front().target;
+    } else {
+        auto prev = it - 1;
+        auto next = it;
+        
+        float segmentDuration = next->time - prev->time;
+        float segmentTime = t - prev->time;
+        float factor = segmentDuration > 0.0f ? segmentTime / segmentDuration : 0.0f;
+
+        interpolateKeyframes(*prev, *next, factor);
+    }
 }
 
-glm::vec3 Camera::cameraUp() const {
-    glm::vec3 fwd = glm::normalize(target_ - eye_);
-    glm::vec3 right = glm::normalize(glm::cross(fwd, up_));
-    return glm::normalize(glm::cross(right, fwd));
+void Camera::interpolateKeyframes(const CameraKeyframe& a, const CameraKeyframe& b, float t) {
+    // Suavizado en los extremos (ease-in-out simple)
+    float smoothT = t * t * (3.0f - 2.0f * t);
+    
+    position = glm::lerp(a.position, b.position, smoothT);
+    target = glm::lerp(a.target, b.target, smoothT);
+}
+
+glm::mat4 Camera::getViewMatrix() const {
+    return glm::lookAt(position, target, up);
+}
+
+glm::mat4 Camera::getProjectionMatrix(float aspectRatio) const {
+    return glm::perspective(glm::radians(fov), aspectRatio, nearPlane, farPlane);
+}
+
+glm::vec3 Camera::getRight() const {
+    glm::vec3 forward = glm::normalize(target - position);
+    return glm::normalize(glm::cross(forward, up));
 }

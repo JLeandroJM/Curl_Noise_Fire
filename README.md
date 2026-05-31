@@ -1,114 +1,100 @@
-# Curl_Noise_Fire
+# Simulación de Fuego Basada en Partículas con Curl Noise en GPU
 
-Simulación de fuego en tiempo real con un sistema de partículas movido por
-**curl noise** (Bridson et al., 2007) y la metodología clásica de
-particle systems (Reeves, 1983). Implementación nativa en **Metal** sobre
-Apple Silicon (M2), con todo el código host escrito en **C++17 puro**
-usando los bindings [`metal-cpp`](https://developer.apple.com/metal/cpp/).
+## Equipo del Proyecto
+- **Miembro 1**: (Nombre del estudiante)
+- **Miembro 2**: (Nombre del estudiante)
+- **Miembro 3**: (Nombre del estudiante)
 
-Proyecto del curso de Computación Gráfica — UTEC.
+Este proyecto implementa un sistema avanzado de simulación de fuego utilizando partículas, con aceleración por GPU (Compute Shaders de OpenGL). El núcleo del movimiento turbulento del fuego, humo y brasas se logra mediante la evaluación de **Curl Noise**, una técnica que garantiza campos vectoriales incompresibles (divergencia cero), lo cual imita el comportamiento de los fluidos de manera muy realista sin el costo computacional de resolver las ecuaciones completas de Navier-Stokes.
 
-![Fuego 1](images/fuego1.png)
+El proyecto permite interactuar con diferentes materiales (madera, papel, cemento, hojas de árbol) donde cada material tiene propiedades de ignición y velocidad de quemado distintas.
 
-## Resumen técnico
+---
 
-- **GPU API:** Metal (compute + render pipelines), sin OpenGL, sin MPS.
-- **Host:** C++17 con `metal-cpp` + extensions (`AppKit.hpp`, `MetalKit.hpp`).
-- **Shaders:** MSL (Metal Shading Language) compilados en runtime via
-  `MTL::Device::newLibrary(source)`. Esto evita la dependencia del paquete
-  *Metal Toolchain* (separado de Command Line Tools en macOS reciente) y
-  además se alinea con el patrón NVRTC que usaremos al portar a CUDA.
-- **Partículas:** ~100,000 por defecto, residentes en un único `MTL::Buffer`
-  (storage shared) y recicladas cuando mueren.
-- **Por frame:**
-  1. **Compute pass** — `update_particles` muestrea curl noise (rotacional
-     de un campo vectorial de simplex 3D), suma boyanza, integra
-     posición/velocidad e incrementa la edad. Si una partícula muere se
-     reinicializa con jitter en un disco alrededor del emisor.
-  2. **Render pass** — billboards orientados a cámara (6 vértices × N
-     instancias) con alpha aditivo y gradiente de color por edad
-     blanco → amarillo → naranja → rojo → ceniza.
+## Explicación Matemática del Curl Noise
 
-![Fuego 2](images/fuego2.png)
+El Curl Noise se basa en generar un campo vectorial incompresible aplicando el operador rotacional ($\nabla \times$) a un campo de potencial tridimensional generado por funciones de ruido (como el Perlin o Simplex Noise).
 
-## Estructura del proyecto
+Sea $\vec{\Psi}(x,y,z)$ un campo de potencial vectorial tridimensional derivado de funciones de ruido:
+$$ \vec{\Psi}(x,y,z) = ( \psi_x(x,y,z), \psi_y(x,y,z), \psi_z(x,y,z) ) $$
 
-```
-Curl_Noise_Fire/
-├── CMakeLists.txt
-├── external/metal-cpp/        # bindings de Apple (incluye AppKit/MetalKit)
-├── shaders/
-│   └── particle.metal         # simplex3D + curlNoise + update + billboard
-├── src/
-│   ├── main.cpp               # NSApplication / NSWindow / MTKView
-│   ├── MetalCppImpl.cpp       # única TU con las macros _PRIVATE_IMPLEMENTATION
-│   ├── MetalContext.{hpp,cpp} # device + queue + compilador de shaders
-│   ├── ParticleSystem.{hpp,cpp}
-│   ├── Renderer.{hpp,cpp}     # MTKViewDelegate + pipeline de billboards
-│   ├── Camera.{hpp,cpp}
-│   └── Particle.hpp           # layout compartido host ↔ MSL (static_assert)
-└── images/                    # screenshots
-```
+El campo de velocidades $\vec{v}(x,y,z)$ se obtiene aplicando el operador curl (rotacional) sobre $\vec{\Psi}$:
+$$ \vec{v} = \nabla \times \vec{\Psi} $$
 
-## Requisitos (macOS / Apple Silicon)
+Desarrollando el rotacional en sus componentes cartesianas:
+$$ \vec{v} = \left( \frac{\partial \psi_z}{\partial y} - \frac{\partial \psi_y}{\partial z}, \quad \frac{\partial \psi_x}{\partial z} - \frac{\partial \psi_z}{\partial x}, \quad \frac{\partial \psi_y}{\partial x} - \frac{\partial \psi_x}{\partial y} \right) $$
 
-- macOS reciente (probado en macOS 26 / Apple Silicon M2).
-- Xcode Command Line Tools — `xcode-select --install`.
-- CMake ≥ 3.20 — `brew install cmake`.
-- GLM — `brew install glm`.
-- Headers de `metal-cpp` ya incluidos en `external/metal-cpp/` (los de
-  AppKit/MetalKit vienen de `LearnMetalCPP.zip` de Apple).
+Una propiedad matemática fundamental del operador rotacional es que su divergencia siempre es exactamente cero ($\nabla \cdot (\nabla \times \vec{\Psi}) = 0$). Dado que en la dinámica de fluidos la ecuación de continuidad para un fluido incompresible es $\nabla \cdot \vec{v} = 0$, el campo de velocidades generado por el Curl Noise es intrínsecamente incompresible, evitando que las partículas converjan en puntos específicos (efecto de "pozo") o se dispersen artificialmente (efecto de "fuente").
 
-> **No requiere Xcode app completo ni el Metal Toolchain** porque los
-> shaders se compilan en runtime.
+Para calcular las derivadas espaciales de manera eficiente, empleamos diferencias finitas centrales:
+$$ \frac{\partial \psi}{\partial x} \approx \frac{\psi(x + \epsilon, y, z) - \psi(x - \epsilon, y, z)}{2\epsilon} $$
 
-## Cómo correrlo en Mac
+---
+
+## Instrucciones de Compilación
+
+### Dependencias
+- C++17
+- CMake (>= 3.15)
+- OpenGL (>= 4.3 para Compute Shaders)
+- GLFW
+- GLAD
+- GLM
+
+### Compilar en Linux (Servidor Khipu)
 
 ```bash
-# 1) Desde la raíz del repo, configurar y compilar
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
+mkdir build
+cd build
+cmake ..
+make -j4
+```
+*Nota para servidores sin pantalla (Headless):* Asegúrese de ejecutar bajo un entorno que provea contexto OpenGL, o exportar variables de entorno como `DISPLAY`. Si es estrictamente sin ventanas, el código de renderizado deberá utilizar un contexto off-screen (e.g., EGL).
 
-# 2) Ejecutar
-./build/fire
+### Compilar en Windows
+
+Se recomienda utilizar Visual Studio (con soporte para C++) o MinGW-w64.
+```cmd
+mkdir build
+cd build
+cmake ..
+cmake --build . --config Release
 ```
 
-Se abre una ventana 1280×720 mostrando la simulación. **Cmd-Q** para salir.
+---
 
-En stderr deberías ver:
+## Instrucciones de Uso
 
+El ejecutable principal acepta argumentos de línea de comandos para seleccionar la escena, controlar la carga gráfica y establecer parámetros de renderizado fuera de pantalla.
+
+```bash
+./fire-simulation [opciones]
 ```
-Metal device: Apple M2
+
+**Opciones de Línea de Comandos:**
+- `--scene <nombre>` : Ejecuta una escena específica. Opciones: `PaperFire`, `WallFire`, `TreeFire`, `StructuralFire`, `BuildingFire`. (Por defecto: ejecuta todas secuencialmente).
+- `--lightweight` : Reduce drásticamente el número de partículas para GPUs de gama de entrada (como la GTX 1650).
+- `--headless` : Renderiza frames directamente a disco sin abrir una ventana de visualización (ideal para el servidor Khipu).
+- `--outdir <ruta>` : Define el directorio de salida donde se guardarán los frames si se utiliza `--headless` (Por defecto: `./output_frames/`).
+
+**Ejemplo de uso:**
+```bash
+./fire-simulation --scene TreeFire --lightweight
 ```
 
-![Fuego 3](images/fuego3.png)
+---
 
-## Parámetros (tuneables recompilando)
+## Descripciones de las Escenas
 
-Los parámetros viven en código (sin ImGui en esta fase):
+1. **PaperFire**: Una hoja de papel sobre un escritorio de madera. El fuego comienza en una esquina y se propaga lentamente de forma diagonal. Demuestra el consumo de material ligero.
+2. **WallFire**: Un muro de cemento de grandes dimensiones con fuego lamiendo la superficie desde la base. El cemento no se quema, ilustrando el tratamiento de colisiones y límites físicos con el Curl Noise.
+3. **TreeFire**: Un árbol compuesto por cilindros (tronco), líneas (ramas) y esferas de partículas (hojas). Muestra variaciones drásticas en la velocidad de propagación: las hojas se incendian y desaparecen rápidamente, mientras que la madera arde lento.
+4. **StructuralFire**: Estructura de vigas, columnas y paredes interiores de cemento con una puerta de madera. Simulando el interior de un cuarto, el humo espeso y la alta turbulencia se abren paso buscando escapes de oxígeno a través de la entrada de madera.
+5. **BuildingFire**: Escena final de mayor magnitud (fachada de UTEC). Representa un edificio con huecos para ventanas y un intenso fuego originado en las plantas bajas que envuelve progresivamente las estructuras superiores con una masiva columna de humo.
 
-- **Cantidad de partículas y ventana** — `src/main.cpp`, namespace `cfg`.
-- **Física del fuego** — campos públicos de `ParticleSystem`
-  (`buoyancy`, `curlScale`, `curlStrength`, `emitRadius`,
-  `lifetimeMin/Max`, `sizeMin/Max`, `emitVelMin/Max`).
-- **Paleta de colores y envolvente de alpha** — función
-  `billboard_fragment` en `shaders/particle.metal` (vectores `c0..c3`).
-- **Cámara** — constructor de `Camera` en `src/Renderer.cpp` (eye, target,
-  FOV).
-
-## Hacia la portabilidad a CUDA / Windows
-
-El código está separado de modo que la capa Metal queda confinada a
-`MetalContext`, `Renderer`, el `encodeUpdate` de `ParticleSystem` y el
-bootstrap de `main.cpp`. Particle layout, Camera, parámetros físicos y el
-algoritmo de curl noise (simplex 3D de Ashima/Gustavson) se traducen 1:1
-a CUDA C++ + NVRTC sin cambios de lógica.
+---
 
 ## Referencias
 
-- Bridson, R., Houriham, J., Nordenstam, M. (2007).
-  *Curl-Noise for Procedural Fluid Flow.* ACM SIGGRAPH.
-- Reeves, W. T. (1983).
-  *Particle Systems — A Technique for Modeling a Class of Fuzzy Objects.*
-  ACM Transactions on Graphics, 2(2).
-- Gustavson, S. *Simplex noise demystified* / Ashima Arts `webgl-noise`.
+- Bridson, R., Hourihan, J., & Marcus, M. (2007). *Juggling: turbulent flow and curl noise*. In ACM SIGGRAPH 2007 courses (SIGGRAPH '07). Association for Computing Machinery, New York, NY, USA, 10–es. https://doi.org/10.1145/1281500.1281671
+- Perlin, K. (2002). *Improving Noise*. ACM Trans. Graph., 21(3), 681–682.
