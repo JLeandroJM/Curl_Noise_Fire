@@ -1,164 +1,64 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.18)
 
-project(FireSimulation VERSION 1.0 LANGUAGES C CXX)
+project(FireCUDA VERSION 1.0 LANGUAGES CXX CUDA)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_CUDA_STANDARD 17)
+set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+
+# Arquitecturas GPU:
+#   GTX 1650 / Tesla T4 -> 75
+#   A100                -> 80
+#   RTX A6000           -> 86
+# Sobreescribir con, p.ej., -DCMAKE_CUDA_ARCHITECTURES=75 al configurar.
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+    set(CMAKE_CUDA_ARCHITECTURES 75 80 86)
+endif()
 
 # ------------------------------------------------------------
-# FetchContent para dependencias
-# ------------------------------------------------------------
-include(FetchContent)
-
-# ------------------------------------------------------------
-# GLFW
-# ------------------------------------------------------------
-FetchContent_Declare(
-    glfw
-    GIT_REPOSITORY https://github.com/glfw/glfw.git
-    GIT_TAG 3.3.8
-)
-
-set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-
-FetchContent_MakeAvailable(glfw)
-
-# ------------------------------------------------------------
-# ------------------------------------------------------------
-# GLM LOCAL
-# GLM es header-only, no se descarga ni se linkea.
-# Debe existir:
-#   external/glm/glm/glm.hpp
+# Dependencias locales (todo vendorizado en external/, sin internet)
 # ------------------------------------------------------------
 set(GLM_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/glm")
+set(STB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/stb")
 
 if(NOT EXISTS "${GLM_DIR}/glm/glm.hpp")
-    message(FATAL_ERROR "No se encontro external/glm/glm/glm.hpp")
+    message(FATAL_ERROR "No se encontro ${GLM_DIR}/glm/glm.hpp")
 endif()
-# ------------------------------------------------------------
-# OpenCV opcional
-# Si no está instalado, el proyecto igual compila.
-# Solo se desactiva exportación directa a video.
-# ------------------------------------------------------------
-find_package(OpenCV QUIET)
-
-if(OpenCV_FOUND)
-    message(STATUS "OpenCV encontrado. Exportacion de video habilitada.")
-else()
-    message(WARNING "OpenCV no encontrado. Se desactiva la exportacion a video. Solo se exportaran frames PNG.")
-endif()
-
-# ------------------------------------------------------------
-# GLAD LOCAL
-# Este proyecto usa GLAD moderno:
-#   external/glad/include/glad/gl.h
-#   external/glad/src/gl.c
-# ------------------------------------------------------------
-set(GLAD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/glad")
-
-if(NOT EXISTS "${GLAD_DIR}/include/glad/gl.h")
-    message(FATAL_ERROR "No se encontro external/glad/include/glad/gl.h")
-endif()
-
-if(NOT EXISTS "${GLAD_DIR}/src/gl.c")
-    message(FATAL_ERROR "No se encontro external/glad/src/gl.c")
-endif()
-
-add_library(glad STATIC
-    "${GLAD_DIR}/src/gl.c"
-)
-
-target_include_directories(glad PUBLIC
-    "${GLAD_DIR}/include"
-)
-
-# ------------------------------------------------------------
-# STB IMAGE WRITE para exportar PNGs
-# ------------------------------------------------------------
-set(STB_DIR "${CMAKE_CURRENT_BINARY_DIR}/stb")
-file(MAKE_DIRECTORY "${STB_DIR}")
-
 if(NOT EXISTS "${STB_DIR}/stb_image_write.h")
-    file(DOWNLOAD
-        "https://raw.githubusercontent.com/nothings/stb/master/stb_image_write.h"
-        "${STB_DIR}/stb_image_write.h"
-        SHOW_PROGRESS
-    )
+    message(FATAL_ERROR "No se encontro ${STB_DIR}/stb_image_write.h")
 endif()
 
 # ------------------------------------------------------------
-# Fuentes del proyecto
+# Fuentes
 # ------------------------------------------------------------
-file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
+add_executable(fire_cuda
+    src/main.cpp
+    src/Scenes.cpp
+    src/stb_impl.cpp
+    src/FireEngine.cu
+    src/Camera.cpp
+    src/scenes/SceneUtils.cpp
 )
 
-add_executable(FireSimulation
-    ${SOURCES}
-)
-
-# ------------------------------------------------------------
-# Includes
-# ------------------------------------------------------------
-target_include_directories(FireSimulation PRIVATE
+target_include_directories(fire_cuda PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
-    "${GLAD_DIR}/include"
-    "${STB_DIR}"
     "${GLM_DIR}"
+    "${STB_DIR}"
 )
 
-if(OpenCV_FOUND)
-    target_include_directories(FireSimulation PRIVATE
-        ${OpenCV_INCLUDE_DIRS}
-    )
+# Camera.cpp usa glm/gtx (lerp) -> experimental
+target_compile_definitions(fire_cuda PRIVATE GLM_ENABLE_EXPERIMENTAL)
 
-    target_compile_definitions(FireSimulation PRIVATE
-        HAS_OPENCV=1
-    )
-endif()
-
-# ------------------------------------------------------------
-# IMPORTANTE:
-# Evita que GLFW incluya OpenGL por su cuenta.
-# Nosotros cargamos OpenGL usando GLAD.
-# ------------------------------------------------------------
-target_compile_definitions(FireSimulation PRIVATE
-    GLFW_INCLUDE_NONE
-GLM_ENABLE_EXPERIMENTAL
+# Optimizacion
+target_compile_options(fire_cuda PRIVATE
+    $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math>
 )
 
-# ------------------------------------------------------------
-# Links
-# OJO: NO poner glm aquí.
-# GLM es header-only, por eso NO existe glm.lib.
-# ------------------------------------------------------------
-target_link_libraries(FireSimulation PRIVATE
-    glad
-    glfw
+set_target_properties(fire_cuda PROPERTIES
+    CUDA_SEPARABLE_COMPILATION OFF
 )
 
-if(OpenCV_FOUND)
-    target_link_libraries(FireSimulation PRIVATE
-        ${OpenCV_LIBS}
-    )
-endif()
-
-# ------------------------------------------------------------
-# Copiar shaders al directorio del ejecutable
-# ------------------------------------------------------------
-add_custom_command(TARGET FireSimulation POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_CURRENT_SOURCE_DIR}/shaders"
-        "$<TARGET_FILE_DIR:FireSimulation>/shaders"
-)
-
-# ------------------------------------------------------------
-# Mensajes finales
-# ------------------------------------------------------------
-message(STATUS "GLAD local usado desde: ${GLAD_DIR}")
-message(STATUS "GLM usado como headers desde: ${GLM_DIR}")
-message(STATUS "Shaders se copiaran desde: ${CMAKE_CURRENT_SOURCE_DIR}/shaders")
+message(STATUS "FireCUDA: arquitecturas CUDA = ${CMAKE_CUDA_ARCHITECTURES}")
+message(STATUS "FireCUDA: glm desde ${GLM_DIR}")

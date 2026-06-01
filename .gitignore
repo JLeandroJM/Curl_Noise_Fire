@@ -58,3 +58,10 @@ LearnMetalCPP.zip
 metal-cpp_*.zip
 
 video
+
+# ---------------- Render output / runtime ----------------
+output/
+test_out/
+logs/
+*.sif
+__pycache__/

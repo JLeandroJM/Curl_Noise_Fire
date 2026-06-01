@@ -1,100 +1,175 @@
-# Simulación de Fuego Basada en Partículas con Curl Noise en GPU
+# Simulación de Fuego con Curl Noise — Port CUDA (headless) para Khipu
 
-## Equipo del Proyecto
-- **Miembro 1**: (Nombre del estudiante)
-- **Miembro 2**: (Nombre del estudiante)
-- **Miembro 3**: (Nombre del estudiante)
+Este proyecto es una implementación del simulador de fuego **enteramente en CUDA**, pensada para correr en el cluster **Khipu** de UTEC (Slurm + GPU NVIDIA, **sin pantalla**). Es **autocontenido**: todas sus dependencias están en `external/` (glm, stb).
 
-Este proyecto implementa un sistema avanzado de simulación de fuego utilizando partículas, con aceleración por GPU (Compute Shaders de OpenGL). El núcleo del movimiento turbulento del fuego, humo y brasas se logra mediante la evaluación de **Curl Noise**, una técnica que garantiza campos vectoriales incompresibles (divergencia cero), lo cual imita el comportamiento de los fluidos de manera muy realista sin el costo computacional de resolver las ecuaciones completas de Navier-Stokes.
+**No se usa OpenGL/EGL**: la GPU hace tanto la **simulación** (emisión + integración con curl noise) como el **rasterizado** (splatting de partículas → buffer HDR → bloom → tonemap). La salida son **secuencias de PNG RGBA** (color premultiplicado por alpha), listas para componer sobre metraje real con OpenCV.
 
-El proyecto permite interactuar con diferentes materiales (madera, papel, cemento, hojas de árbol) donde cada material tiene propiedades de ignición y velocidad de quemado distintas.
+```
+   ┌── Simulación CUDA ──┐   ┌── Render CUDA (splatting) ──┐   ┌─ Export ─┐
+   │ emitKernel          │   │ splat → HDR (emisivo+humo)  │   │ PNG RGBA │
+   │ updateKernel (curl) │ → │ resolve → bloom → tonemap   │ → │ por frame│
+   └─────────────────────┘   └─────────────────────────────┘   └──────────┘
+                                                                     │
+                                       composite.py (OpenCV)  ◄──────┘
+                                       sobre metraje real de UTEC → video final
+```
 
----
-
-## Explicación Matemática del Curl Noise
-
-El Curl Noise se basa en generar un campo vectorial incompresible aplicando el operador rotacional ($\nabla \times$) a un campo de potencial tridimensional generado por funciones de ruido (como el Perlin o Simplex Noise).
-
-Sea $\vec{\Psi}(x,y,z)$ un campo de potencial vectorial tridimensional derivado de funciones de ruido:
-$$ \vec{\Psi}(x,y,z) = ( \psi_x(x,y,z), \psi_y(x,y,z), \psi_z(x,y,z) ) $$
-
-El campo de velocidades $\vec{v}(x,y,z)$ se obtiene aplicando el operador curl (rotacional) sobre $\vec{\Psi}$:
-$$ \vec{v} = \nabla \times \vec{\Psi} $$
-
-Desarrollando el rotacional en sus componentes cartesianas:
-$$ \vec{v} = \left( \frac{\partial \psi_z}{\partial y} - \frac{\partial \psi_y}{\partial z}, \quad \frac{\partial \psi_x}{\partial z} - \frac{\partial \psi_z}{\partial x}, \quad \frac{\partial \psi_y}{\partial x} - \frac{\partial \psi_x}{\partial y} \right) $$
-
-Una propiedad matemática fundamental del operador rotacional es que su divergencia siempre es exactamente cero ($\nabla \cdot (\nabla \times \vec{\Psi}) = 0$). Dado que en la dinámica de fluidos la ecuación de continuidad para un fluido incompresible es $\nabla \cdot \vec{v} = 0$, el campo de velocidades generado por el Curl Noise es intrínsecamente incompresible, evitando que las partículas converjan en puntos específicos (efecto de "pozo") o se dispersen artificialmente (efecto de "fuente").
-
-Para calcular las derivadas espaciales de manera eficiente, empleamos diferencias finitas centrales:
-$$ \frac{\partial \psi}{\partial x} \approx \frac{\psi(x + \epsilon, y, z) - \psi(x - \epsilon, y, z)}{2\epsilon} $$
+## ¿Qué produce?
+Por cada escena, una carpeta con un PNG por frame: `output/<Escena>/<Escena>_00000.png`, ...
+Eso es el **producto crudo**. Después:
+1. (Opcional) `make_video.sh` arma un `.mp4`/`.mov` con alpha.
+2. `composite.py` superpone el fuego sobre el metraje real → **video entregable**.
 
 ---
 
-## Instrucciones de Compilación
+## Requisitos
+- **CUDA Toolkit** ≥ 11.4 (en Khipu vía `module load cuda`, o usando el contenedor Apptainer).
+- **CMake** ≥ 3.18.
+- El **repo completo clonado** (esta carpeta reutiliza `../external/glm`, `../include`, `../src/scenes`).
+- Para componer: Python 3 con `opencv-python` y `numpy` (corre en tu Mac/PC, no necesita GPU).
 
-### Dependencias
-- C++17
-- CMake (>= 3.15)
-- OpenGL (>= 4.3 para Compute Shaders)
-- GLFW
-- GLAD
-- GLM
+---
 
-### Compilar en Linux (Servidor Khipu)
+## Compilar y correr en local (PC con GPU NVIDIA)
 
 ```bash
-mkdir build
-cd build
-cmake ..
-make -j4
-```
-*Nota para servidores sin pantalla (Headless):* Asegúrese de ejecutar bajo un entorno que provea contexto OpenGL, o exportar variables de entorno como `DISPLAY`. Si es estrictamente sin ventanas, el código de renderizado deberá utilizar un contexto off-screen (e.g., EGL).
+# desde la raiz del repo
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j4
 
-### Compilar en Windows
-
-Se recomienda utilizar Visual Studio (con soporte para C++) o MinGW-w64.
-```cmd
-mkdir build
-cd build
-cmake ..
-cmake --build . --config Release
+# Render de una escena (sin ventana, escribe PNGs):
+./build/fire_cuda --scene BuildingFire --width 1280 --height 720 --fps 30 --outdir output/BuildingFire
 ```
 
----
-
-## Instrucciones de Uso
-
-El ejecutable principal acepta argumentos de línea de comandos para seleccionar la escena, controlar la carga gráfica y establecer parámetros de renderizado fuera de pantalla.
-
+### Probar en una GPU modesta (ej. GTX 1650, 4 GB, sm_75)
 ```bash
-./fire-simulation [opciones]
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=75
+cmake --build build -j4
+# parametros bajos para validar que corre:
+./build/fire_cuda --scene WallFire --lightweight --width 1280 --height 720 --duration 3 --outdir test_out
 ```
 
-**Opciones de Línea de Comandos:**
-- `--scene <nombre>` : Ejecuta una escena específica. Opciones: `PaperFire`, `WallFire`, `TreeFire`, `StructuralFire`, `BuildingFire`. (Por defecto: ejecuta todas secuencialmente).
-- `--lightweight` : Reduce drásticamente el número de partículas para GPUs de gama de entrada (como la GTX 1650).
-- `--headless` : Renderiza frames directamente a disco sin abrir una ventana de visualización (ideal para el servidor Khipu).
-- `--outdir <ruta>` : Define el directorio de salida donde se guardarán los frames si se utiliza `--headless` (Por defecto: `./output_frames/`).
+> En Mac (Apple Silicon) **no se puede compilar/ejecutar** esto: CUDA es solo NVIDIA. Compílalo en Khipu o en un PC con GPU NVIDIA.
 
-**Ejemplo de uso:**
+### Opciones principales
+| Flag | Descripción | Default |
+|------|-------------|---------|
+| `--scene <s>` | `PaperFire`/`WallFire`/`TreeFire`/`StructuralFire`/`BuildingFire` o índice 0–4 | 0 |
+| `--width/--height` | Resolución | 1920×1080 |
+| `--fps` | Frames por segundo | 30 |
+| `--duration <s>` | Sobreescribe la duración de la escena | (la de la escena) |
+| `--outdir <ruta>` | Carpeta de salida | `output` |
+| `--lightweight` | Menos partículas (pruebas rápidas) | off |
+| `--show-geometry` | Dibuja materiales estáticos (mesa, muro…) para **preview**. No usar para composición. | off |
+| `--wind <f>` | Viento en +X | 0 |
+| `--glow/--exposure/--bloom/--smoke` | Ajustes de look | ver `--help` |
+
+---
+
+## Correr en Khipu (Slurm)
+
+### 1. Subir el código
 ```bash
-./fire-simulation --scene TreeFire --lightweight
+# desde tu máquina
+scp -r Curl_Noise_Fire <usuario>@khipu.utec.edu.pe:~/
+# (o git clone dentro de Khipu)
+```
+
+### 2. Opción A — módulos del sistema
+```bash
+cd ~/Curl_Noise_Fire
+sbatch job.sbatch BuildingFire 30      # escena, fps
+squeue -u $USER                        # ver estado
+# logs en logs/fire-<jobid>.out
+```
+`job.sbatch` pide 1 GPU (`--gres=gpu:1`), compila si hace falta y renderiza a `output/<Escena>/`.
+Ajusta `module load cuda/<version>` según lo que muestre `module avail cuda` en Khipu.
+
+### 3. Opción B — contenedor Apptainer (recomendado si los módulos dan problemas)
+Construye la imagen una vez (en una máquina donde seas root o con `--fakeroot`):
+```bash
+apptainer build fire.sif apptainer/fire.def
+```
+Y en el job de Slurm, en vez de `module load`, usa:
+```bash
+apptainer exec --nv fire.sif bash -lc '
+  cmake -S . -B build -DCMAKE_BUILD_TYPE=Release &&
+  cmake --build build -j4 &&
+  build/fire_cuda --scene BuildingFire --outdir output/BuildingFire'
+```
+El flag **`--nv`** expone la GPU NVIDIA del nodo dentro del contenedor.
+
+### GPUs de Khipu (referencia)
+| Nodo | GPU | VRAM | Arch (sm_) |
+|------|-----|------|-----------|
+| g001 | Tesla T4 | 16 GB | 75 |
+| ag001 | 2× A100 | 40 GB | 80 |
+| g002 / ds001 | RTX A6000 | 48 GB | 86 |
+
+El binario se compila para `sm_75;80;86` (cubre todas). Para fijar una sola:
+`cmake -S . -B build -DCMAKE_CUDA_ARCHITECTURES=80`.
+
+---
+
+## Componer sobre metraje real (entregable final)
+
+Trae los PNG de Khipu a tu máquina y compón con OpenCV:
+```bash
+pip install opencv-python numpy
+
+# sobre un video real del edificio:
+python tools/composite.py --frames output/BuildingFire \
+    --bg metraje_utec.mp4 --out incendio_utec.mp4 --fps 30 --loop-bg
+
+# sobre una foto fija:
+python tools/composite.py --frames output/WallFire \
+    --bg foto_pared.jpg --out pared.mp4 --fps 30
+```
+Los PNG llevan **alpha premultiplicado**, así que la composición es
+`out = fuego_rgb + fondo * (1 − alpha)` (ya implementada en el script).
+
+Para un preview rápido sobre negro o un `.mov` con alpha para editor de video:
+```bash
+tools/make_video.sh output/BuildingFire BuildingFire.mp4 30
 ```
 
 ---
 
-## Descripciones de las Escenas
+## Cómo está organizado
 
-1. **PaperFire**: Una hoja de papel sobre un escritorio de madera. El fuego comienza en una esquina y se propaga lentamente de forma diagonal. Demuestra el consumo de material ligero.
-2. **WallFire**: Un muro de cemento de grandes dimensiones con fuego lamiendo la superficie desde la base. El cemento no se quema, ilustrando el tratamiento de colisiones y límites físicos con el Curl Noise.
-3. **TreeFire**: Un árbol compuesto por cilindros (tronco), líneas (ramas) y esferas de partículas (hojas). Muestra variaciones drásticas en la velocidad de propagación: las hojas se incendian y desaparecen rápidamente, mientras que la madera arde lento.
-4. **StructuralFire**: Estructura de vigas, columnas y paredes interiores de cemento con una puerta de madera. Simulando el interior de un cuarto, el humo espeso y la alta turbulencia se abren paso buscando escapes de oxígeno a través de la entrada de madera.
-5. **BuildingFire**: Escena final de mayor magnitud (fachada de UTEC). Representa un edificio con huecos para ventanas y un intenso fuego originado en las plantas bajas que envuelve progresivamente las estructuras superiores con una masiva columna de humo.
+```
+.
+├── include/
+│   ├── vec_math.cuh       Operadores float3/float4 (host+device)
+│   ├── SimplexNoise.cuh   Simplex 3D/4D portado del GLSL (Ashima/Gustavson)
+│   ├── CurlNoise.cuh      Curl noise: v = ∇×Ψ por diferencias finitas
+│   ├── gpu_types.cuh      GpuParticle/GpuEmitter (layout 64B = al host)
+│   ├── FireEngine.h       API de host del motor
+│   ├── Scenes.h           Fábrica de las 5 escenas
+│   ├── Particle.h         struct Particle + EmitterConfig + CurlNoiseParams
+│   ├── Camera.h           Cámara con rutas de keyframes
+│   └── Scene.h            Interfaz Scene + GeometryUtils
+├── src/
+│   ├── FireEngine.cu      Kernels (emit/update/splat/bloom/tonemap) + host
+│   ├── Scenes.cpp         Incluye las 5 escenas (sin duplicar)
+│   ├── main.cpp           CLI headless + export PNG
+│   ├── stb_impl.cpp       Implementación de stb_image_write
+│   ├── Camera.cpp
+│   └── scenes/            5 escenas + SceneUtils (geometría de partículas)
+├── external/             glm + stb (vendorizados, sin internet)
+├── job.sbatch            Script Slurm para Khipu
+├── apptainer/fire.def    Contenedor CUDA
+└── tools/                composite.py (OpenCV) + make_video.sh (ffmpeg)
+```
+
+El proyecto es **autocontenido**. La estructura `Particle` del host (64 B) se copia binariamente a `GpuParticle` en la GPU (mismo layout).
 
 ---
 
-## Referencias
-
-- Bridson, R., Hourihan, J., & Marcus, M. (2007). *Juggling: turbulent flow and curl noise*. In ACM SIGGRAPH 2007 courses (SIGGRAPH '07). Association for Computing Machinery, New York, NY, USA, 10–es. https://doi.org/10.1145/1281500.1281671
-- Perlin, K. (2002). *Improving Noise*. ACM Trans. Graph., 21(3), 681–682.
+## Notas técnicas y limitaciones (honestas)
+- **Curl noise**: portado fielmente del GLSL. Es lo más costoso (simplex 4D × diferencias finitas × octavas). Si va lento, baja `octaves` en la escena o usa `--lightweight`.
+- **Humo**: se resuelve con *weighted-average OIT* (orden-independiente), aproximación; ocluye de forma plausible pero no es físicamente exacto.
+- **Combustión de materiales**: se corrigió un bug del diseño original (`maxLifetime=10000` impedía que el material ardiera); ahora se usa una duración de quemado acotada.
+- **Geometría estática** (mesa, muro, fachada): solo se dibuja con `--show-geometry`, pensada como preview. Para la composición sobre metraje real **no** se renderiza (el fondo real ya la aporta).
+- **Determinismo**: `dt` fijo (`1/fps`) y semilla basada en tiempo → frames reproducibles para video.
+- **No hay colisión real con obstáculos todavía** (las partículas pueden atravesar muros). Es la siguiente mejora natural (usar un SDF + `curlNoiseWithBoundary`).
