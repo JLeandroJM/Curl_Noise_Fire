@@ -22,10 +22,17 @@ Eso es el **producto crudo**. Después:
 
 ---
 
+## Qué se hizo (resumen)
+- **Port completo a CUDA** del simulador de fuego (antes OpenGL): emisión + integración con **curl noise** (simplex 3D/4D portado fielmente del GLSL) corriendo en GPU, headless.
+- **Rasterizador tiled tipo 2D Gaussian Splatting** (adaptado y mejorado a partir de `rasrerizado_cuda`): proyección a gaussianas 2D → asignación a tiles → orden por (tile, profundidad) con thrust → blend front-to-back en memoria compartida. Fallback simple con `--simple-raster`.
+- **Pipeline de imagen**: bloom + tonemap ACES + sRGB → exporta **PNG RGBA premultiplicado** por frame.
+- **Composición** sobre metraje real con OpenCV (`tools/composite.py`), fuera del cluster.
+- Proyecto **autocontenido** (glm y stb vendorizados en `external/`), pensado para **Slurm + Apptainer en Khipu**.
+- Se corrigió un bug heredado (la combustión de materiales nunca arrancaba por `maxLifetime=10000`).
+
 ## Requisitos
 - **CUDA Toolkit** ≥ 11.4 (en Khipu vía `module load cuda`, o usando el contenedor Apptainer).
 - **CMake** ≥ 3.18.
-- El **repo completo clonado** (esta carpeta reutiliza `../external/glm`, `../include`, `../src/scenes`).
 - Para componer: Python 3 con `opencv-python` y `numpy` (corre en tu Mac/PC, no necesita GPU).
 
 ---
@@ -66,13 +73,23 @@ cmake --build build -j4
 
 ---
 
-## Correr en Khipu (Slurm)
+## Correr en Khipu (Slurm) — paso a paso
 
-### 1. Subir el código
+> Según la doc de Khipu: hay un **nodo de acceso** (solo para compilar y enviar jobs) y nodos de cómputo con GPU gestionados por **Slurm**. Nunca corras el render directo en el nodo de acceso: siempre vía `sbatch`/`srun`.
+
+### 0. Acceso por SSH (una sola vez)
 ```bash
-# desde tu máquina
+# configura tu llave SSH (ver docs.khipu.utec.edu.pe/primeros-pasos/configurar-llaves-ssh)
+ssh-keygen -t ed25519                       # si no tienes llave
+ssh-copy-id <usuario>@khipu.utec.edu.pe     # o registra la llave segun su guia
+ssh <usuario>@khipu.utec.edu.pe             # entrar al nodo de acceso
+```
+
+### 1. Subir el código al nodo de acceso
+```bash
+# desde tu máquina (la composición OpenCV NO va a Khipu, queda local)
 scp -r Curl_Noise_Fire <usuario>@khipu.utec.edu.pe:~/
-# (o git clone dentro de Khipu)
+# (o: git clone <tu-repo> dentro de Khipu)
 ```
 
 ### 2. Opción A — módulos del sistema
@@ -108,6 +125,24 @@ El flag **`--nv`** expone la GPU NVIDIA del nodo dentro del contenedor.
 
 El binario se compila para `sm_75;80;86` (cubre todas). Para fijar una sola:
 `cmake -S . -B build -DCMAKE_CUDA_ARCHITECTURES=80`.
+
+### 4. Monitorear el job
+```bash
+squeue -u $USER                 # cola / estado (PD=pendiente, R=corriendo)
+sacct -j <jobid>                # estadísticas (memoria, CPU, estado final)
+tail -f logs/fire-<jobid>.out   # progreso del render (frames)
+scancel <jobid>                 # cancelar si hace falta
+```
+
+### 5. Traer los frames a tu máquina (para componer)
+```bash
+# desde tu máquina
+scp -r <usuario>@khipu.utec.edu.pe:~/Curl_Noise_Fire/output/BuildingFire ./output/
+# luego, en local, componer sobre el metraje real (ver sección siguiente):
+python tools/composite.py --frames output/BuildingFire --bg metraje_utec.mp4 --out incendio_utec.mp4 --fps 30 --loop-bg
+```
+
+> Resumen del flujo Khipu: **acceso SSH → subir → `sbatch job.sbatch <Escena> <fps>` → `squeue`/logs → `scp` de los PNG → componer con OpenCV en local.**
 
 ---
 
@@ -167,8 +202,9 @@ El proyecto es **autocontenido**. La estructura `Particle` del host (64 B) se co
 ---
 
 ## Notas técnicas y limitaciones (honestas)
+- **Rasterizador tiled (2DGS)**: el render por defecto usa rasterizado *tiled* (estilo Gaussian Splatting, adaptado de `rasrerizado_cuda`): cada partícula se proyecta a una gaussiana 2D, se asigna a tiles, se **ordena por (tile, profundidad)** con thrust y se compone **front-to-back** (`C += T·αᵢ·colorᵢ; T·=(1−αᵢ)`) en memoria compartida. Es más correcto y rápido que el splat aditivo. El alpha final = `1−T`. Hay un fallback más simple con `--simple-raster`.
 - **Curl noise**: portado fielmente del GLSL. Es lo más costoso (simplex 4D × diferencias finitas × octavas). Si va lento, baja `octaves` en la escena o usa `--lightweight`.
-- **Humo**: se resuelve con *weighted-average OIT* (orden-independiente), aproximación; ocluye de forma plausible pero no es físicamente exacto.
+- **Humo y fuego** comparten el mismo blend front-to-back: el fuego (emisivo brillante) suma luz y el humo (gris, opaco) ocluye, con orden correcto.
 - **Combustión de materiales**: se corrigió un bug del diseño original (`maxLifetime=10000` impedía que el material ardiera); ahora se usa una duración de quemado acotada.
 - **Geometría estática** (mesa, muro, fachada): solo se dibuja con `--show-geometry`, pensada como preview. Para la composición sobre metraje real **no** se renderiza (el fondo real ya la aporta).
 - **Determinismo**: `dt` fijo (`1/fps`) y semilla basada en tiempo → frames reproducibles para video.

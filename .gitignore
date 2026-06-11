@@ -65,3 +65,6 @@ test_out/
 logs/
 *.sif
 __pycache__/
+
+BuildingFire_Frames/
+external/
