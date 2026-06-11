@@ -1,0 +1,9 @@
+build/
+.vs/
+*.sln
+*.vcxproj*
+*.exe
+*.obj
+*.lib
+*.rar
+*.zip
