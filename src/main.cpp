@@ -9,7 +9,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 
@@ -66,6 +69,10 @@ int parseSceneArgument(const std::string& value) {
         return 4;
     }
 
+    if (name == "test5" || name == "scene5" || name == "papelpro" || name == "papelrojo") {
+        return 5;
+    }
+
     std::cerr << "Escena no reconocida: " << value << std::endl;
     std::cerr << "Usando escena 0 por defecto.\n";
 
@@ -83,12 +90,14 @@ void printUsage() {
     std::cout << "  1 / WallFire       = fuego sobre pared\n";
     std::cout << "  2 / TreeFire       = fuego en arbol\n";
     std::cout << "  3 / StructuralFire = fuego estructural\n";
-    std::cout << "  4 / BuildingFire   = fuego en edificio\n\n";
+    std::cout << "  4 / BuildingFire   = fuego en edificio\n";
+    std::cout << "  5 / Test5          = papel quemándose / escena final de papel\n\n";
 
     std::cout << "Opciones:\n";
     std::cout << "  --preview       Ventana 1280x720\n";
     std::cout << "  --lightweight   Menos carga para GPU modesta\n";
     std::cout << "  --export        Exporta video/frames segun soporte\n";
+    std::cout << "                 En servidor guarda PNGs en ./frames aunque no haya OpenCV\n";
     std::cout << "  --help          Muestra esta ayuda\n\n";
 }
 
@@ -231,6 +240,12 @@ int main(int argc, char** argv) {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
+    // En modo exportación no necesitamos mostrar la ventana.
+    // Esto ayuda cuando se ejecuta en servidor con xvfb-run.
+    if (exportVideo) {
+        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    }
+
     GLFWwindow* window = glfwCreateWindow(
         windowWidth,
         windowHeight,
@@ -246,7 +261,9 @@ int main(int argc, char** argv) {
     }
 
     glfwMakeContextCurrent(window);
-    glfwSwapInterval(1);
+
+    // En exportación usamos dt fijo, no conviene sincronizar a monitor.
+    glfwSwapInterval(exportVideo ? 0 : 1);
 
     if (!gladLoadGL((GLADloadfunc)glfwGetProcAddress)) {
         std::cerr << "Fallo al inicializar GLAD.\n";
@@ -308,11 +325,18 @@ int main(int argc, char** argv) {
               << initialBg.b << "\n\n";
 
     FrameExporter exporter;
+    std::filesystem::path framesDir = "frames";
 
     if (exportVideo) {
+        std::filesystem::create_directories(framesDir);
+
         std::string outputName = "output_scene" + std::to_string(initialScene) + ".mp4";
 
         std::cout << "Inicializando exportador: " << outputName << "\n";
+        std::cout << "Tambien se guardaran PNGs en: " << framesDir.string() << "\n";
+
+        // Si OpenCV no está disponible, esto puede fallar, pero NO detiene la exportación.
+        // Igual guardaremos frames PNG y luego los convertimos con ffmpeg.
         exporter.initVideoWriter(outputName, windowWidth, windowHeight, 30.0);
     }
 
@@ -354,7 +378,22 @@ int main(int argc, char** argv) {
         }
 
         if (exportVideo) {
+            // 1) Intentar agregar el frame al video directo si OpenCV está disponible.
             exporter.addFrame(windowWidth, windowHeight);
+
+            // 2) Guardar siempre PNG, para servidores sin OpenCV o sin salida gráfica real.
+            std::ostringstream frameName;
+            frameName << "frame_"
+                      << std::setw(4)
+                      << std::setfill('0')
+                      << frameCount
+                      << ".png";
+
+            std::filesystem::path framePath = framesDir / frameName.str();
+
+            if (!exporter.saveFrameAsPNG(framePath.string(), windowWidth, windowHeight)) {
+                std::cerr << "No se pudo guardar PNG: " << framePath.string() << "\n";
+            }
 
             if (simulatedTime >= sceneDuration) {
                 std::cout << "Tiempo de escena completado. Cerrando export.\n";
@@ -385,7 +424,10 @@ int main(int argc, char** argv) {
 
     if (exportVideo) {
         exporter.finish();
-        std::cout << "Export finalizado.\n";
+        std::cout << "Export finalizado. Frames PNG guardados en ./frames\n";
+        std::cout << "Para convertir a MP4 usa:\n";
+        std::cout << "ffmpeg -y -framerate 30 -i frames/frame_%04d.png -c:v libx264 -pix_fmt yuv420p papel_scene"
+                  << initialScene << ".mp4\n";
     }
 
     std::cout << "Cerrando aplicacion.\n";
