@@ -66,6 +66,7 @@ static bool needArg(int i, int argc, const char* flag) {
 
 int main(int argc, char** argv) {
     Options o;
+    bool bgExplicit = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -88,7 +89,17 @@ int main(int argc, char** argv) {
         else if (a == "--bloom"  && needArg(i, argc, "--bloom"))  o.rp.bloomIntensity = (float)std::atof(argv[++i]);
         else if (a == "--bloom-iters" && needArg(i, argc, "--bloom-iters")) o.rp.bloomIterations = std::atoi(argv[++i]);
         else if (a == "--smoke"  && needArg(i, argc, "--smoke"))  o.rp.smokeDensity = (float)std::atof(argv[++i]);
+        else if (a == "--psize"  && needArg(i, argc, "--psize"))  o.rp.sizeScale = (float)std::atof(argv[++i]);
         else if (a == "--simple-raster") o.rp.tiled = false;
+        else if (a == "--no-smoke") o.rp.renderSmoke = false; // quitar el humo (solo fuego)
+        else if (a == "--solid") o.rp.solidBackground = true; // fondo opaco oscuro (preview tipo Jean)
+        else if (a == "--bg" && i + 3 < argc) {                // fondo opaco con color: --bg r g b
+            o.rp.solidBackground = true;
+            bgExplicit = true;
+            o.rp.bgR = (float)std::atof(argv[++i]);
+            o.rp.bgG = (float)std::atof(argv[++i]);
+            o.rp.bgB = (float)std::atof(argv[++i]);
+        }
         else { std::fprintf(stderr, "Argumento desconocido: %s\n", a.c_str()); printUsage(); return 1; }
     }
     o.rp.showGeometry = o.showGeometry;
@@ -102,6 +113,12 @@ int main(int argc, char** argv) {
     CurlNoiseParams curl;
     CameraPath cameraPath;
     scene->setup(particles, emitters, curl, cameraPath, o.lightweight);
+
+    // Con --solid sin --bg explícito, usar el color de fondo de la escena.
+    if (o.rp.solidBackground && !bgExplicit) {
+        glm::vec3 bg = scene->getBackgroundColor();
+        o.rp.bgR = bg.r; o.rp.bgG = bg.g; o.rp.bgB = bg.b;
+    }
 
     float duration = o.duration > 0.0f ? o.duration : scene->getDuration();
     int totalFrames = (int)(duration * o.fps + 0.5f);

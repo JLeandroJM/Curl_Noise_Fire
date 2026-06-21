@@ -48,11 +48,13 @@ __device__ inline float4 mulMat4Point(const Mat4& M, float3 p) {
 // Gradiente de color del fuego por temperatura (igual que particle_update.comp)
 // ---------------------------------------------------------------------------
 __device__ inline float4 getFireColor(float temp) {
-    if (temp > 0.85f) return mix4(make_float4(1,1,0,1), make_float4(1,1,1,1), (temp-0.85f)/0.15f);
-    if (temp > 0.6f)  return mix4(make_float4(1,0.5f,0,1), make_float4(1,1,0,1), (temp-0.6f)/0.25f);
-    if (temp > 0.3f)  return mix4(make_float4(1,0,0,1), make_float4(1,0.5f,0,1), (temp-0.3f)/0.3f);
-    if (temp > 0.15f) return mix4(make_float4(0.5f,0,0,1), make_float4(1,0,0,1), (temp-0.15f)/0.15f);
-    return mix4(make_float4(0,0,0,1), make_float4(0.5f,0,0,1), temp/0.15f);
+    // Paleta cálida: blanco-amarillento SOLO en el núcleo más caliente; el grueso
+    // de la llama es naranja->rojo->rojo oscuro (menos blowout, más realista).
+    if (temp > 0.92f) return mix4(make_float4(1,0.95f,0.55f,1), make_float4(1,1,0.9f,1), (temp-0.92f)/0.08f);
+    if (temp > 0.6f)  return mix4(make_float4(1,0.45f,0.05f,1), make_float4(1,0.95f,0.55f,1), (temp-0.6f)/0.32f);
+    if (temp > 0.3f)  return mix4(make_float4(0.85f,0.1f,0.0f,1), make_float4(1,0.45f,0.05f,1), (temp-0.3f)/0.3f);
+    if (temp > 0.15f) return mix4(make_float4(0.4f,0.02f,0.0f,1), make_float4(0.85f,0.1f,0.0f,1), (temp-0.15f)/0.15f);
+    return mix4(make_float4(0,0,0,1), make_float4(0.4f,0.02f,0.0f,1), temp/0.15f);
 }
 
 // ===========================================================================
@@ -80,11 +82,14 @@ __global__ void updateKernel(GpuParticle* P, int n, float dt, float t,
     float3 force = windDir * windStrength;
 
     if (p.type == G_TYPE_FIRE) {
-        p.temperature -= dt * 0.5f;
+        p.temperature -= dt * 0.85f; // enfría más rápido -> llama corta que enrojece arriba
         p.temperature = fmaxf(p.temperature, 0.0f);
         float3 buoy = make_float3(0.0f, 1.0f, 0.0f) * (buoyancy * p.temperature);
         float3 curl = curlNoise(pos, t, cp);
-        vel += (buoy + curl * 5.0f + force) * dt;
+        // Curl reducido (antes *5 = demasiado explosivo). Más flotabilidad, menos
+        // dispersión lateral -> fuego concentrado que sube en columna/lengua.
+        vel += (buoy + curl * 1.8f + force) * dt;
+        vel.x *= 0.96f; vel.z *= 0.96f; // amortigua dispersión horizontal (concentra)
         pos += vel * dt;
         p.color = getFireColor(p.temperature);
         p.color.w *= (1.0f - age_ratio);
@@ -119,35 +124,108 @@ __global__ void updateKernel(GpuParticle* P, int n, float dt, float t,
         p.color.w *= (1.0f - age_ratio);
     }
     else if (p.type >= 10u) {
-        // Material comburente: máquina de estados de combustión.
-        // NOTA: las funciones de geometría fijan maxLifetime=10000, lo que hacía
-        // que phase fuera ~0 y el material nunca ardiera. Usamos una duración de
-        // quemado acotada (si maxLifetime no es razonable) para que sí ignicione.
+        // Material comburente: modelo de combustión de 5 fases (portado de la
+        // versión OpenGL del compañero). burnDuration fijo por material — antes
+        // el bug de maxLifetime=10000 impedía que ardiera.
+        if (p.type == G_TYPE_PAPER) {
+            // El papel ondea en el aire antes de quemarse.
+            float wave = sinf(p.position.x * 3.0f + t * 2.0f) * cosf(p.position.z * 3.0f + t * 1.5f);
+            pos.y += wave * 0.1f * dt;
+        }
+
         float burnStartTime = p.velocity.w;
         if (t > burnStartTime) {
-            float burnDur = (p.maxLifetime > 0.01f && p.maxLifetime < 100.0f) ? p.maxLifetime : 4.0f;
-            float phase = (t - burnStartTime) / burnDur;
-            if (phase < 0.1f) {
-                p.color.x *= (1.0f - dt * 2.0f);
-                p.color.y *= (1.0f - dt * 2.0f);
-                p.color.z *= (1.0f - dt * 2.0f);
-            } else if (phase < 0.4f) {
-                p.type = G_TYPE_FIRE;
-                p.temperature = 1.0f;
-                p.maxLifetime = 2.0f;
-                p.lifetime = p.maxLifetime;
-                p.velocity.w = 1.0f;
-                vel = vel + make_float3(0.0f, 1.0f, 0.0f); // impulso inicial hacia arriba
-            } else if (phase < 0.7f) {
-                p.type = G_TYPE_EMBER;
-                p.lifetime = 1.0f;
-                p.maxLifetime = 1.0f;
-            } else if (phase < 1.0f) {
-                p.type = G_TYPE_SMOKE;
-                p.lifetime = 2.0f;
-                p.maxLifetime = 2.0f;
+            float burnDuration = 3.0f;                       // papel
+            if (p.type == G_TYPE_WOOD)   burnDuration = 15.0f;
+            if (p.type == G_TYPE_CEMENT) burnDuration = 50.0f;
+
+            float phase = (t - burnStartTime) / burnDuration;
+            float3 rgb = make_float3(p.color.x, p.color.y, p.color.z);
+
+            if (p.type == G_TYPE_PAPER) {
+                // ========== FRENTE DE CARBONIZACIÓN DEL PAPEL ==========
+                // Borde incandescente que avanza dejando papel NEGRO carbonizado
+                // detrás, encogiéndose y curvándose. Es el "cómo se quema un papel".
+                float3 dry   = make_float3(0.85f, 0.78f, 0.55f);
+                float3 ember = make_float3(1.7f, 0.55f, 0.12f);    // >1 => brilla (bloom)
+                float3 charc = make_float3(0.035f, 0.025f, 0.02f); // carbón negro
+
+                if (phase < 0.12f) {
+                    // 1. Borde activo: se enciende de seco a naranja incandescente.
+                    rgb = mix3(dry, ember, phase / 0.12f);
+                } else if (phase < 0.38f) {
+                    // 2. El borde colapsa rápido a carbón negro.
+                    rgb = mix3(ember, charc, (phase - 0.12f) / 0.26f);
+                    p.position.w *= 0.997f;
+                } else if (phase < 0.75f) {
+                    // 3. Carbón negro con brasa tenue que se apaga; el papel se curva.
+                    float tt = (phase - 0.38f) / 0.37f;
+                    float pulse = fabsf(sinf(t * 6.0f + pos.x * 25.0f)) * 0.5f + 0.5f;
+                    rgb = charc + make_float3(0.45f, 0.10f, 0.0f) * pulse * (1.0f - tt);
+                    p.position.w *= 0.996f;
+                    pos += curlNoise(pos, t * 0.5f, cp) * 0.004f;
+                } else {
+                    // 4. Desintegración: POCA llama, mucha ceniza/muerte -> sin confeti.
+                    float h = fractf(sinf(pos.x * 12.9898f + pos.z * 78.233f) * 43758.5453f);
+                    if (h < 0.15f) {
+                        p.type = G_TYPE_FIRE; p.temperature = 0.7f;
+                        p.maxLifetime = 0.5f + fractf(h * 20.0f) * 0.5f; p.lifetime = p.maxLifetime;
+                        p.velocity.w = 1.0f;
+                        vel = vel + make_float3(0.0f, 1.0f + fractf(h * 10.0f) * 0.6f, 0.0f);
+                    } else if (h < 0.45f) {
+                        p.type = G_TYPE_ASH;
+                        p.maxLifetime = 2.0f + fractf(h * 10.0f); p.lifetime = p.maxLifetime;
+                        p.color = make_float4(0.04f, 0.04f, 0.04f, 0.75f);
+                        vel = vel + make_float3((fractf(h * 15.0f) - 0.5f) * 0.6f,
+                                                0.7f + fractf(h * 3.0f) * 0.5f,
+                                                (fractf(h * 27.0f) - 0.5f) * 0.6f);
+                    } else {
+                        p.type = G_TYPE_DEAD;
+                    }
+                }
+                if (phase < 0.75f) { p.color.x = rgb.x; p.color.y = rgb.y; p.color.z = rgb.z; }
             } else {
-                p.type = G_TYPE_DEAD;
+                // ========== MADERA / CEMENTO: 5 fases + colapso ==========
+                // COLAPSO: la madera muy quemada pierde sujeción y cae con gravedad.
+                if (p.type == G_TYPE_WOOD && phase > 0.5f) {
+                    vel.y -= 7.0f * dt;
+                    pos += vel * dt;
+                }
+
+                if (phase < 0.1f) {
+                    rgb = mix3(rgb, make_float3(0.8f, 0.7f, 0.2f), phase / 0.1f);
+                } else if (phase < 0.3f) {
+                    rgb = mix3(make_float3(0.8f, 0.7f, 0.2f), make_float3(0.15f, 0.08f, 0.02f), (phase - 0.1f) / 0.2f);
+                    p.position.w *= 0.999f;
+                } else if (phase < 0.6f) {
+                    float pulse = fabsf(sinf(t * 10.0f + pos.x * 20.0f)) * 0.5f + 0.5f;
+                    float3 glow = mix3(make_float3(0.8f, 0.2f, 0.0f), make_float3(1.0f, 0.4f, 0.0f), pulse);
+                    rgb = mix3(make_float3(0.15f, 0.08f, 0.02f), glow, (phase - 0.3f) / 0.3f);
+                    p.position.w *= 0.998f;
+                    pos += curlNoise(pos, t * 0.5f, cp) * 0.005f;
+                } else if (phase < 1.0f) {
+                    rgb = mix3(make_float3(1.0f, 0.4f, 0.0f), make_float3(0.02f, 0.02f, 0.02f), (phase - 0.6f) / 0.4f);
+                    p.color.w = mixf(1.0f, 0.7f, (phase - 0.6f) / 0.4f);
+                } else {
+                    // Desintegración con impulsos REDUCIDOS (antes +2..3 = confeti).
+                    float h = fractf(sinf(pos.x * 12.9898f + pos.z * 78.233f) * 43758.5453f);
+                    if (h < 0.2f) {
+                        p.type = G_TYPE_FIRE; p.temperature = 0.9f;
+                        p.maxLifetime = 0.8f + fractf(h * 20.0f); p.lifetime = p.maxLifetime;
+                        p.velocity.w = 1.0f;
+                        vel = vel + make_float3(0.0f, 1.0f + fractf(h * 10.0f) * 0.5f, 0.0f);
+                    } else if (h < 0.45f) {
+                        p.type = G_TYPE_ASH;
+                        p.maxLifetime = 3.0f + fractf(h * 10.0f); p.lifetime = p.maxLifetime;
+                        p.color = make_float4(0.05f, 0.05f, 0.05f, 0.8f);
+                        vel = vel + make_float3((fractf(h * 15.0f) - 0.5f) * 0.8f,
+                                                1.0f + fractf(h * 3.0f) * 0.5f,
+                                                (fractf(h * 27.0f) - 0.5f) * 0.8f);
+                    } else {
+                        p.type = G_TYPE_DEAD;
+                    }
+                }
+                if (phase < 1.0f) { p.color.x = rgb.x; p.color.y = rgb.y; p.color.z = rgb.z; }
             }
         }
     }
@@ -225,7 +303,7 @@ __global__ void emitKernel(GpuParticle* P, const GpuEmitter* E, int maxParticles
     dir = normalize(dir);
 
     float3 noiseDir = make_float3(random01(seed) - 0.5f, random01(seed) * 0.5f, random01(seed) - 0.5f);
-    dir = normalize(dir + noiseDir * 0.35f);
+    dir = normalize(dir + noiseDir * 0.18f); // menos dispersión -> fuego más concentrado
 
     float speed = initialSpeed + (random01(seed) - 0.5f) * speedVariance;
 
@@ -234,23 +312,19 @@ __global__ void emitKernel(GpuParticle* P, const GpuEmitter* E, int maxParticles
     p.velocity = make_float4(dir.x * speed, dir.y * speed, dir.z * speed, 1.0f);
 
     float r = random01(seed);
-    if (r < 0.75f) {
+    if (r < 0.80f) {
         p.type = G_TYPE_FIRE;
-        p.color = make_float4(1.0f, 0.75f, 0.15f, 1.0f);
-        p.temperature = fmaxf(temperature, 0.8f);
-        p.maxLifetime = fmaxf(particleLife, 1.0f) * (0.75f + random01(seed) * 0.5f);
-    } else if (r < 0.92f) {
-        p.type = G_TYPE_SMOKE;
-        p.color = make_float4(0.28f, 0.28f, 0.28f, 0.65f);
-        p.temperature = 0.35f;
-        p.maxLifetime = fmaxf(particleLife * 1.6f, 2.0f);
-        p.position.w *= 1.8f;
+        p.color = make_float4(1.0f, 0.6f, 0.12f, 1.0f);
+        p.temperature = fmaxf(temperature, 0.85f);
+        p.maxLifetime = fmaxf(particleLife, 0.8f) * (0.7f + random01(seed) * 0.5f);
     } else {
-        p.type = G_TYPE_SPARK;
-        p.color = make_float4(1.0f, 0.9f, 0.25f, 1.0f);
-        p.temperature = 1.0f;
-        p.maxLifetime = 0.6f + random01(seed) * 0.5f;
-        p.position.w *= 0.35f;
+        // Sin SPARK: los puntos brillantes voladores eran el "confeti". El humo
+        // gris oscuro de papel sube y enmarca la llama contra el fondo.
+        p.type = G_TYPE_SMOKE;
+        p.color = make_float4(0.16f, 0.15f, 0.15f, 0.6f);
+        p.temperature = 0.3f;
+        p.maxLifetime = fmaxf(particleLife * 1.8f, 2.2f);
+        p.position.w *= 2.0f;
     }
     p.lifetime = p.maxLifetime;
 
@@ -261,19 +335,21 @@ __global__ void emitKernel(GpuParticle* P, const GpuEmitter* E, int maxParticles
 // RASTERIZADO POR SPLATTING
 // ===========================================================================
 __global__ void splatKernel(const GpuParticle* P, int n, Mat4 vp, int W, int H,
-                            float proj11, float glow, int showGeometry,
+                            float proj11, float glow, int showGeometry, int renderSmoke,
                             float4* emissive, float4* smoke, float* smokeW) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= n) return;
 
     GpuParticle p = P[idx];
     if (p.type == G_TYPE_DEAD) return;
+    if (p.type == G_TYPE_SMOKE && !renderSmoke) return; // --no-smoke
 
     // Clasificar
     bool isEmissive = (p.type == G_TYPE_FIRE || p.type == G_TYPE_EMBER || p.type == G_TYPE_SPARK);
     bool isSmoke    = (p.type == G_TYPE_SMOKE || p.type == G_TYPE_ASH);
-    bool isStatic   = (p.type >= 10u);
-    if (isStatic && !showGeometry) return;
+    bool isStatic   = (p.type >= 10u); // material (combustible o estructural)
+    bool isStructural = (p.type == G_TYPE_CEMENT || p.type == G_TYPE_GROUND);
+    if (isStructural && !showGeometry) return; // estructural solo en preview; combustible siempre
 
     float3 pos = make_float3(p.position.x, p.position.y, p.position.z);
     float4 clip = mulMat4Point(vp, pos);
@@ -368,6 +444,7 @@ __global__ void resolveKernel(const float4* emissive, const float4* smoke, const
 // Paso 1: proyecta cada partícula a una gaussiana 2D y cuenta tiles cubiertos.
 __global__ void preprocessKernel(const GpuParticle* P, int n, Mat4 vp, int W, int H,
                                  float proj11, float glow, int showGeometry, float smokeDensity,
+                                 float sizeScale, int renderSmoke,
                                  int tileSize, int tilesX, int tilesY,
                                  float2* mu, float* sigma, float* depth, float* opacity,
                                  float4* color, int4* tileBox, int* tileCount) {
@@ -377,11 +454,14 @@ __global__ void preprocessKernel(const GpuParticle* P, int n, Mat4 vp, int W, in
 
     GpuParticle p = P[idx];
     if (p.type == G_TYPE_DEAD) return;
+    if (p.type == G_TYPE_SMOKE && !renderSmoke) return; // --no-smoke
 
     bool isEmissive = (p.type == G_TYPE_FIRE || p.type == G_TYPE_EMBER || p.type == G_TYPE_SPARK);
     bool isSmoke    = (p.type == G_TYPE_SMOKE || p.type == G_TYPE_ASH);
-    bool isStatic   = (p.type >= 10u);
-    if (isStatic && !showGeometry) return;
+    // Material combustible (papel/madera/hoja) ES el sujeto que arde -> se dibuja siempre.
+    // Material estructural (cemento/suelo) es contexto para composición -> solo con --show-geometry.
+    bool isStructural = (p.type == G_TYPE_CEMENT || p.type == G_TYPE_GROUND);
+    if (isStructural && !showGeometry) return;
 
     float3 pos = make_float3(p.position.x, p.position.y, p.position.z);
     float4 clip = mulMat4Point(vp, pos);
@@ -395,19 +475,23 @@ __global__ void preprocessKernel(const GpuParticle* P, int n, Mat4 vp, int W, in
     float sy = (1.0f - (ndcy * 0.5f + 0.5f)) * (float)H;
 
     float worldSize = p.position.w;
-    float pr = worldSize * proj11 * (0.5f * (float)H) * invw;
-    pr = clampf(pr, 0.75f, 180.0f);
-    float sig = fmaxf(pr * 0.5f, 0.4f); // radio visual ~ 2*sigma
+    float pr = worldSize * proj11 * (0.5f * (float)H) * invw * sizeScale;
+    pr = clampf(pr, 1.0f, 180.0f);
+    float sig = fmaxf(pr * 0.6f, 0.6f); // radio visual ~ 2*sigma (un poco más suave para fundir)
 
     float3 rgb;
     float op;
+    float emisFlag = 0.0f;
     if (isEmissive) {
         rgb = make_float3(p.color.x, p.color.y, p.color.z) * glow;
-        op = clampf(p.color.w, 0.0f, 1.0f);
+        // Opacidad baja: muchas partículas semitransparentes se SUMAN en una llama
+        // continua (núcleo brillante, bordes suaves) en vez de puntos duros.
+        op = clampf(p.color.w, 0.0f, 1.0f) * 0.35f;
+        emisFlag = 1.0f;
     } else if (isSmoke) {
         rgb = make_float3(p.color.x, p.color.y, p.color.z);
         op = clampf(p.color.w * smokeDensity, 0.0f, 0.95f);
-    } else { // material estático (preview)
+    } else { // material (combustible/estructural)
         rgb = make_float3(p.color.x, p.color.y, p.color.z);
         op = 1.0f;
     }
@@ -429,7 +513,7 @@ __global__ void preprocessKernel(const GpuParticle* P, int n, Mat4 vp, int W, in
     sigma[idx] = sig;
     depth[idx] = clip.w;
     opacity[idx] = op;
-    color[idx] = make_float4(rgb.x, rgb.y, rgb.z, 0.0f);
+    color[idx] = make_float4(rgb.x, rgb.y, rgb.z, emisFlag); // w = flag emisivo
     tileBox[idx] = make_int4(tx0, ty0, tx1, ty1);
     tileCount[idx] = (tx1 - tx0 + 1) * (ty1 - ty0 + 1);
 }
@@ -500,6 +584,7 @@ __global__ void __launch_bounds__(256) tiledBlendKernel(
     __shared__ float s_cr[TILED_BATCH];
     __shared__ float s_cg[TILED_BATCH];
     __shared__ float s_cb[TILED_BATCH];
+    __shared__ float s_emis[TILED_BATCH]; // 1 = emisivo (fuego, aditivo) ; 0 = ocluye (humo/madera)
 
     const float T_MIN = 1e-4f;
 
@@ -512,7 +597,7 @@ __global__ void __launch_bounds__(256) tiledBlendKernel(
             s_mux[l] = mu[id].x; s_muy[l] = mu[id].y;
             s_sig[l] = sigma[id]; s_op[l] = opacity[id];
             float4 c = color[id];
-            s_cr[l] = c.x; s_cg[l] = c.y; s_cb[l] = c.z;
+            s_cr[l] = c.x; s_cg[l] = c.y; s_cb[l] = c.z; s_emis[l] = c.w;
         }
         __syncthreads();
 
@@ -525,10 +610,14 @@ __global__ void __launch_bounds__(256) tiledBlendKernel(
                 float alpha = s_op[k] * expf(-e);
                 if (alpha < 1e-4f) continue;
                 alpha = fminf(alpha, 0.999f);
+                // El fuego SUMA luz (aditivo) y no ocluye -> se funde en llama con
+                // núcleo brillante y bordes suaves. El humo/madera sí ocluyen.
                 float w = alpha * T;
                 C.x += w * s_cr[k]; C.y += w * s_cg[k]; C.z += w * s_cb[k];
-                T *= (1.0f - alpha);
-                if (T < T_MIN) { done = true; break; }
+                if (s_emis[k] < 0.5f) {
+                    T *= (1.0f - alpha);
+                    if (T < T_MIN) { done = true; break; }
+                }
             }
         }
         if (__syncthreads_count(done) == blockDim.x) break;
@@ -581,20 +670,29 @@ __device__ inline float srgb(float c) {
 }
 
 __global__ void compositeKernel(const float4* hdr, const float4* bloom, uchar4* out,
-                                int W, int H, float exposure, float bloomIntensity) {
+                                int W, int H, float exposure, float bloomIntensity,
+                                int solidBg, float3 bgColor) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= W * H) return;
 
     float4 h = hdr[idx];
     float4 bl = bloom[idx];
+    // color premultiplicado (fuego + glow)
     float3 color = make_float3(h.x, h.y, h.z) + make_float3(bl.x, bl.y, bl.z) * bloomIntensity;
+    float alpha = clampf(h.w, 0.0f, 1.0f);
+
+    if (solidBg) {
+        // Componer sobre fondo sólido: out = fuego_premult + bg*(1-alpha)
+        color = color + bgColor * (1.0f - alpha);
+    }
+
     color = color * exposure;
     color = acesTonemap(color);
 
     unsigned char r = (unsigned char)(srgb(color.x) * 255.0f + 0.5f);
     unsigned char g = (unsigned char)(srgb(color.y) * 255.0f + 0.5f);
     unsigned char b = (unsigned char)(srgb(color.z) * 255.0f + 0.5f);
-    unsigned char a = (unsigned char)(clampf(h.w, 0.0f, 1.0f) * 255.0f + 0.5f);
+    unsigned char a = solidBg ? 255 : (unsigned char)(alpha * 255.0f + 0.5f);
     out[idx] = make_uchar4(r, g, b, a);
 }
 
@@ -711,6 +809,7 @@ void FireEngine::render(const glm::mat4& viewProj, float proj11,
         preprocessKernel<<<gridP, BLOCK>>>(
             (GpuParticle*)d_particles_, maxParticles_, vp, width_, height_,
             proj11, rp.particleGlow, rp.showGeometry ? 1 : 0, rp.smokeDensity,
+            rp.sizeScale, rp.renderSmoke ? 1 : 0,
             kTileSize, tilesX_, tilesY_,
             (float2*)d_visMu_, (float*)d_visSigma_, (float*)d_visDepth_, (float*)d_visOpacity_,
             (float4*)d_visColor_, (int4*)d_tileBox_, (int*)d_tileCount_);
@@ -767,7 +866,7 @@ void FireEngine::render(const glm::mat4& viewProj, float proj11,
         CUDA_CHECK(cudaMemset(d_smokeW_,   0, px * sizeof(float)));
 
         splatKernel<<<gridP, BLOCK>>>((GpuParticle*)d_particles_, maxParticles_, vp, width_, height_,
-                                      proj11, rp.particleGlow, rp.showGeometry ? 1 : 0,
+                                      proj11, rp.particleGlow, rp.showGeometry ? 1 : 0, rp.renderSmoke ? 1 : 0,
                                       (float4*)d_emissive_, (float4*)d_smoke_, (float*)d_smokeW_);
 
         resolveKernel<<<gridPix, BLOCK>>>((float4*)d_emissive_, (float4*)d_smoke_, (float*)d_smokeW_,
@@ -785,7 +884,8 @@ void FireEngine::render(const glm::mat4& viewProj, float proj11,
     }
 
     compositeKernel<<<gridPix, BLOCK>>>((float4*)d_hdr_, (float4*)d_bloomA_, (uchar4*)d_out_,
-                                        width_, height_, rp.exposure, rp.bloomIntensity);
+                                        width_, height_, rp.exposure, rp.bloomIntensity,
+                                        rp.solidBackground ? 1 : 0, make_float3(rp.bgR, rp.bgG, rp.bgB));
     CUDA_CHECK(cudaGetLastError());
 
     CUDA_CHECK(cudaMemcpy(h_pinned_, d_out_, px * 4, cudaMemcpyDeviceToHost));

@@ -11,15 +11,19 @@
 #include "Particle.h"   // struct Particle, EmitterConfig, CurlNoiseParams (host)
 
 struct RenderParams {
-    float bloomThreshold  = 1.0f;   // brillo mínimo para el bloom
-    float bloomIntensity  = 0.8f;   // cuánto se suma el bloom
+    float bloomThreshold  = 1.1f;   // brillo mínimo para el bloom
+    float bloomIntensity  = 0.4f;   // cuánto se suma el bloom (bajado: evita blowout)
     int   bloomIterations = 5;      // pasadas de blur separable
-    float exposure        = 1.3f;   // exposición antes del tonemap
+    float exposure        = 0.9f;   // exposición antes del tonemap (bajado: menos blanco quemado)
     float smokeDensity    = 1.6f;   // escala de opacidad del humo
-    float particleGlow    = 1.2f;   // multiplicador de brillo emisivo (fuego/chispa)
-    bool  showGeometry    = false;  // dibujar materiales estáticos (preview, no para composición)
+    float particleGlow    = 0.7f;   // multiplicador de brillo emisivo (bajado: menos saturación)
+    bool  showGeometry    = false;  // dibujar materiales ESTRUCTURALES (cemento/suelo). El combustible siempre se dibuja.
     bool  tiled           = true;   // rasterizador tiled (recomendado). false = splat simple (fallback)
     int   tileSize        = 16;     // 16x16 = 256 hilos/bloque (no cambiar sin ajustar shared mem)
+    float sizeScale       = 1.0f;   // multiplica el tamaño en pantalla de las partículas (ajuste de "puntitos")
+    bool  solidBackground = false;  // si true: compone sobre bg sólido (preview opaco). false: RGBA transparente
+    float bgR = 0.04f, bgG = 0.04f, bgB = 0.05f; // color de fondo sólido (oscuro, estilo Jean)
+    bool  renderSmoke     = true;   // false (--no-smoke): no dibuja el humo (solo fuego/brasas/ceniza)
 };
 
 class FireEngine {

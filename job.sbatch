@@ -33,13 +33,12 @@ echo "GPU(s):"
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader || true
 echo "nvcc:        $(command -v nvcc) ; $(nvcc --version | tail -n1)"
 
-# --- Compilar (si no existe el binario) ---
+# --- Compilar SIEMPRE (incremental: solo recompila lo que cambió) ---
+# Importante: tras editar el codigo hay que recompilar, si no se usa el binario viejo.
 BUILD_DIR=build
-if [ ! -x "${BUILD_DIR}/fire_cuda" ]; then
-    echo "== Compilando =="
-    cmake -S . -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE=Release
-    cmake --build "${BUILD_DIR}" -j4
-fi
+echo "== Compilando (incremental) =="
+cmake -S . -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE=Release
+cmake --build "${BUILD_DIR}" -j4
 
 # --- Render ---
 OUTDIR="output/${SCENE}"

@@ -1,0 +1,10 @@
+build/
+.git/
+output/
+*_Frames/
+*.sif
+*.mp4
+*.mov
+*.png
+composites/
+fotos/

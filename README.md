@@ -61,7 +61,7 @@ cmake --build build -j4
 ### Opciones principales
 | Flag | Descripción | Default |
 |------|-------------|---------|
-| `--scene <s>` | `PaperFire`/`WallFire`/`TreeFire`/`StructuralFire`/`BuildingFire` o índice 0–4 | 0 |
+| `--scene <s>` | `PaperFire`/`WallFire`/`TreeFire`/`StructuralFire`/`BuildingFire`/`Test5` o índice 0–5 | 0 |
 | `--width/--height` | Resolución | 1920×1080 |
 | `--fps` | Frames por segundo | 30 |
 | `--duration <s>` | Sobreescribe la duración de la escena | (la de la escena) |
