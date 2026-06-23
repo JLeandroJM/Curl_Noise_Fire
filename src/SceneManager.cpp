@@ -240,6 +240,7 @@
 #include <iostream>
 #include <random>
 #include "../include/Test5Scene.h"
+#include "../include/PaperFireScene.h"
 
 // =============================================================================
 // Scene 0: Hoja de Papel - Papel Quemándose
@@ -643,6 +644,7 @@ void SceneManager::init() {
     scenes.push_back(std::make_unique<Scene3_Explosion>());
     scenes.push_back(std::make_unique<Scene4_FireStorm>());
     scenes.push_back(createTest5Scene());
+    scenes.push_back(createPaperFireScene());
 }
 
 bool SceneManager::loadScene(int index,

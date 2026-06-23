@@ -1,8 +1,4 @@
 #pragma once
-// =============================================================================
-// ParticleSystem.h - Sistema de partículas acelerado por GPU
-// Proyecto: Simulación de Fuego con Curl Noise
-// =============================================================================
 
 #include <glad/gl.h>
 #include <glm/glm.hpp>
@@ -17,45 +13,40 @@ public:
     ParticleSystem();
     ~ParticleSystem();
 
-    // Inicializar con partículas pre-generadas (material + pool de fuego muerto)
     void init(const std::vector<Particle>& initialParticles,
               const std::vector<EmitterConfig>& emitters,
               const std::string& shaderDir = "shaders");
 
-    // Actualizar partículas via compute shaders
     void update(float deltaTime, float currentTime);
-
-    // Renderizar partículas como billboards
     void render(const Camera& camera, float aspectRatio);
 
-    // Configurar parámetros de curl noise
     void setCurlNoiseParams(const CurlNoiseParams& params);
 
-    // Configurar fuerzas globales
     void setGravity(const glm::vec3& g) { gravity = g; }
     void setBuoyancy(float b) { buoyancyStrength = b; }
     void setWind(const glm::vec3& dir, float strength);
 
-    // Información
     uint32_t getMaxParticles() const { return maxParticles; }
     uint32_t getActiveParticles() const { return activeParticles; }
 
-    // Cleanup
     void cleanup();
 
 private:
-    // --- GPU Resources ---
-    GLuint particleSSBO = 0;    // Buffer de partículas
-    GLuint emitterSSBO  = 0;    // Buffer de emisores
-    GLuint particleVAO  = 0;    // VAO para renderizado
-    GLuint atomicBuffer = 0;    // Atomic counter para emisión
+    GLuint particleSSBO = 0;
+    GLuint emitterSSBO = 0;
+    GLuint particleVAO = 0;
+    GLuint atomicBuffer = 0;
 
-    // --- Shaders ---
-    Shader updateShader;        // particle_update.comp
-    Shader emitShader;          // particle_emit.comp
-    Shader renderShader;        // particle.vert + .geom + .frag
+    GLuint paperMeshVAO = 0;
+    GLuint paperMeshVBO = 0;
+    GLuint paperMeshEBO = 0;
+    uint32_t paperMeshIndexCount = 0;
 
-    // --- Parámetros ---
+    Shader updateShader;
+    Shader emitShader;
+    Shader renderShader;
+    Shader paperMeshShader;
+
     uint32_t maxParticles = 0;
     uint32_t activeParticles = 0;
     uint32_t numEmitters = 0;
@@ -66,11 +57,14 @@ private:
     glm::vec3 windDirection = glm::vec3(0.0f);
     float windStrength = 0.0f;
 
-    // --- Métodos internos ---
+    float lastRenderTime = 0.0f;
+
     void createSSBO(const std::vector<Particle>& particles);
     void createEmitterSSBO(const std::vector<EmitterConfig>& emitters);
+    void createPaperMesh(const std::vector<Particle>& particles);
     void loadShaders(const std::string& shaderDir);
     void setupVAO();
+    void renderPaperMesh(const Camera& camera, float aspectRatio, float currentTime);
     void dispatchUpdateCompute(float deltaTime, float currentTime);
     void dispatchEmitCompute(float deltaTime, float currentTime);
     void setComputeUniforms(Shader& shader, float deltaTime, float currentTime);

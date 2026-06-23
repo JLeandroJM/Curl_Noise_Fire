@@ -9,7 +9,7 @@ public:
     }
 
     float getDuration() const override {
-        return 20.0f;
+        return 28.0f;
     }
 
     glm::vec3 getBackgroundColor() const override {
@@ -22,17 +22,16 @@ public:
                CameraPath& cameraPath,
                bool lightweight) override {
         
-        particles.clear();
         emitters.clear();
 
-        // Color ROJO para el papel
-        glm::vec4 paperColor(0.9f, 0.1f, 0.1f, 1.0f); 
+        // Papel claro antes de quemarse.
+        glm::vec4 paperColor(0.97f, 0.94f, 0.86f, 1.0f);
 
         // Papel: Densidad extrema para formar una superficie sólida
         int paperU = lightweight ? 350 : 500;
         int paperV = lightweight ? 250 : 350;
 
-        float paperParticleSize = lightweight ? 0.005f : 0.004f;
+        float paperParticleSize = lightweight ? 0.0048f : 0.0042f;
 
         // Quitamos la mesa. Solo generamos el papel.
         glm::vec3 paperCenter(0.0f, 0.0f, 0.0f);
@@ -48,7 +47,21 @@ public:
 
         // PUNTO DE IGNICIÓN (Esquina del papel)
         std::vector<glm::vec3> ignitionPoints = { paperCenter - glm::vec3(0.6f, 0.0f, 0.4f) };
-        float baseBurnSpeed = 0.15f; // Velocidad MUCHO más lenta (antes 0.45f)
+        float baseBurnSpeed = 0.085f;
+
+        EmitterConfig flameFront;
+        flameFront.position = ignitionPoints[0] + glm::vec3(0.04f, 0.018f, 0.04f);
+        flameFront.shape = EmitterShape::DISK;
+        flameFront.radius = 0.055f;
+        flameFront.direction = glm::vec3(0.14f, 1.0f, 0.08f);
+        flameFront.emitRate = lightweight ? 1800.0f : 3400.0f;
+        flameFront.particleLife = 0.85f;
+        flameFront.lifeVariance = 0.30f;
+        flameFront.initialSpeed = 0.72f;
+        flameFront.speedVariance = 0.36f;
+        flameFront.temperature = 1.0f;
+        flameFront.particleSize = lightweight ? 0.020f : 0.016f;
+        emitters.push_back(flameFront);
         
         // PROPAGACIÓN REALISTA (Simulación de humedad/espesor)
         std::mt19937 rng(42);
@@ -63,28 +76,18 @@ public:
                 }
                 
                 // Ruido más agresivo para crear islas que tardan mucho en quemarse (zonas húmedas/densas)
-                float noise = sin(pos.x * 12.0f) * cos(pos.z * 12.0f) * 1.5f +
-                              sin(pos.x * 25.0f + 1.2f) * cos(pos.z * 25.0f + 0.5f) * 0.8f +
-                              dist(rng) * 0.3f;
+                float noise = sin(pos.x * 10.0f) * cos(pos.z * 9.0f) * 0.85f +
+                              sin(pos.x * 23.0f + 1.2f) * cos(pos.z * 21.0f + 0.5f) * 0.45f +
+                              dist(rng) * 0.35f;
                               
                 float thermalAcceleration = std::pow(minDist, 0.90f);
-                float fragility = (dist(rng) > 0.85f) ? 0.2f : 1.0f; // Agujeros que se forman casi al instante
+                float fragility = (dist(rng) > 0.92f) ? 0.35f : 1.0f;
                 
                 // burnTime variará entre 0 y ~12 segundos a lo largo de la hoja
                 float burnTime = (thermalAcceleration / baseBurnSpeed) + noise * 1.5f * fragility;
                 p.velocity.w = std::max(0.0f, burnTime);
             }
         }
-
-        // Emisor de "chispa" inicial solo para encender el fuego
-        EmitterConfig spark;
-        spark.position = ignitionPoints[0];
-        spark.shape = EmitterShape::POINT;
-        spark.emitRate = 100.0f;
-        spark.particleLife = 1.0f;
-        spark.initialSpeed = 0.5f;
-        spark.particleSize = 0.03f;
-        emitters.push_back(spark);
 
         // Configuración de Curl Noise para las llamas
         curlParams.frequency = 3.0f;
@@ -100,7 +103,7 @@ public:
         glm::vec3 camPos(0.0f, 1.05f, 1.55f);
         glm::vec3 target(0.0f, 0.0f, 0.0f);
         cameraPath.keyframes.push_back({0.0f, camPos, target});
-        cameraPath.keyframes.push_back({20.0f, camPos, target});
+        cameraPath.keyframes.push_back({28.0f, camPos, target});
     }
 };
 

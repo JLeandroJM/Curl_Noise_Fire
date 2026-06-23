@@ -1,5 +1,7 @@
 #include "Scene.h"
 #include <cmath>
+#include <iostream>
+#include "PaperFireScene.h"
 
 class PaperFireScene : public Scene {
 public:
@@ -10,22 +12,22 @@ public:
                CurlNoiseParams& curlParams,
                CameraPath& cameraPath,
                bool lightweight = false) override {
-        
-        particles.clear();
+
+        // ¡ELIMINADO: particles.clear();!
+        // Ahora conservamos el pool de partículas muertas que inyectó SceneManager.
         emitters.clear();
 
-        // Material colors (Cambiamos el papel blanco por un color cartón/madera más oscuro o texturizado)
-        glm::vec4 paperColor(0.8f, 0.7f, 0.5f, 1.0f); // Color más ocre/cartón en lugar de blanco
-        glm::vec4 woodColor(0.35f, 0.2f, 0.1f, 1.0f); // Escritorio más oscuro para contraste
+        // Material colors
+        glm::vec4 paperColor(0.96f, 0.93f, 0.84f, 1.0f);
+        glm::vec4 woodColor(0.30f, 0.18f, 0.10f, 1.0f);
 
-        // Particle counts based on lightweight mode (Aumentado masivamente para que se vea sólido)
+        // Particle counts based on lightweight mode
         int deskCountU = lightweight ? 80 : 150;
         int deskCountV = lightweight ? 60 : 100;
-        int paperCountU = lightweight ? 120 : 250; // Mucho más denso
+        int paperCountU = lightweight ? 120 : 250;
         int paperCountV = lightweight ? 90 : 180;
-        size_t deadPoolSize = lightweight ? 20000 : 50000;
 
-        float pSize = lightweight ? 0.04f : 0.02f;
+        float pSize = lightweight ? 0.026f : 0.014f;
 
         // Desk
         glm::vec3 deskCenter(0.0f, 0.0f, 0.0f);
@@ -43,16 +45,11 @@ public:
 
         // Ignition point: corner of the paper
         std::vector<glm::vec3> ignitionPoints = { paperCenter - glm::vec3(0.5f, 0.0f, 0.375f) };
-        float burnSpeed = 0.3f;
-        float randomVariation = 0.1f;
+        float burnSpeed = 0.18f;
+        float randomVariation = 0.45f;
         GeometryUtils::computeBurnTimes(particles, ignitionPoints, burnSpeed, randomVariation);
 
-        // Add dead particles for fire
-        for (size_t i = 0; i < deadPoolSize; ++i) {
-            Particle p{};
-            p.type = TYPE_DEAD;
-            particles.push_back(p);
-        }
+        // ¡ELIMINADO: El bucle for que creaba las 50,000 partículas muertas!
 
         // Curl noise params for small flames
         curlParams.frequency = 3.0f;
@@ -61,15 +58,17 @@ public:
         curlParams.timeScale = 1.5f;
         curlParams.boundaryWidth = 0.1f;
 
-        // No continuous emitters needed, the material will burn, 
-        // but let's add one tiny emitter at ignition just to spark it
+        // Emitter
         EmitterConfig spark;
         spark.position = ignitionPoints[0];
         spark.shape = EmitterShape::POINT;
-        spark.emitRate = 100.0f;
-        spark.particleLife = 1.0f;
-        spark.initialSpeed = 0.5f;
-        spark.particleSize = 0.03f;
+        spark.direction = glm::vec3(0.15f, 1.0f, 0.10f);
+        spark.emitRate = lightweight ? 500.0f : 900.0f;
+        spark.particleLife = 0.9f;
+        spark.lifeVariance = 0.35f;
+        spark.initialSpeed = 0.9f;
+        spark.speedVariance = 0.5f;
+        spark.particleSize = 0.022f;
         emitters.push_back(spark);
 
         // Camera path
@@ -82,3 +81,7 @@ public:
 
     float getDuration() const override { return 15.0f; }
 };
+
+std::unique_ptr<Scene> createPaperFireScene() {
+    return std::make_unique<PaperFireScene>();
+}

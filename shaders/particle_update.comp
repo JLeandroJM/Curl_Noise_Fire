@@ -53,6 +53,19 @@ vec4 getFireColor(float temp) {
     return mix(vec4(0.0, 0.0, 0.0, 1.0), vec4(0.5, 0.0, 0.0, 1.0), temp / 0.15);
 }
 
+float hash11(float n) {
+    return fract(sin(n) * 43758.5453123);
+}
+
+float hash31(vec3 p) {
+    return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453123);
+}
+
+vec3 paperBaseColor(vec3 pos) {
+    float fiber = sin(pos.x * 95.0) * 0.018 + sin(pos.z * 130.0 + pos.x * 18.0) * 0.012;
+    return vec3(0.96, 0.93, 0.84) + fiber;
+}
+
 void main() {
     uint index = gl_GlobalInvocationID.x;
     if (index >= particles.length()) return;
@@ -62,7 +75,7 @@ void main() {
 
     // Disminuir tiempo de vida
     p.lifetime -= deltaTime;
-    
+
     // Si la partícula muere y no es material estático, marcarla como muerta
     if (p.lifetime <= 0.0 && p.type < 10u) {
         p.type = TYPE_DEAD;
@@ -82,55 +95,55 @@ void main() {
         // Enfriamiento progresivo
         p.temperature -= deltaTime * 0.5;
         p.temperature = max(p.temperature, 0.0);
-        
+
         // Flotabilidad basada en temperatura térmica
         vec3 buoyancy = vec3(0.0, 1.0, 0.0) * buoyancyStrength * p.temperature;
-        
+
         // Ruido Curl para movimiento turbulento tipo fluido
         vec3 curl = curlNoise(pos, currentTime);
-        
+
         vel += (buoyancy + curl * 5.0 + force) * deltaTime;
         pos += vel * deltaTime;
-        
+
         // Actualizar color por temperatura y atenuar alpha
         p.color = getFireColor(p.temperature);
         p.color.a *= (1.0 - age_ratio);
-        
+
     } else if (p.type == TYPE_EMBER) {
         // Movimiento lento y caída ligera con gravedad
         vel += (gravity * 0.2 + force * 0.5) * deltaTime;
         pos += vel * deltaTime;
-        
+
         // Brillo pulsante rojo
         float pulse = sin(currentTime * 10.0 + index) * 0.5 + 0.5;
         p.color = vec4(1.0, 0.2 * pulse, 0.0, 1.0);
         p.color.a *= (1.0 - age_ratio);
-        
+
     } else if (p.type == TYPE_SMOKE) {
         // Humo: Subida lenta, expansión radial y desvanecimiento
         vel += (vec3(0.0, 0.5, 0.0) + force) * deltaTime;
         pos += vel * deltaTime;
-        
-        p.position.w += deltaTime * 2.0; // Aumentar tamaño progresivamente
-        p.color = vec4(0.5, 0.5, 0.5, 1.0); // Gris
-        p.color.a *= max(0.0, 1.0 - age_ratio * 1.5); // Desvanecer rápido
-        
+
+        p.position.w += deltaTime * 0.35; // Aumentar tamaño progresivamente
+        p.color = vec4(0.42, 0.40, 0.37, 0.20); // Gris liviano
+        p.color.a *= max(0.0, 1.0 - age_ratio * 2.4); // Desvanecer rápido
+
     } else if (p.type == TYPE_ASH) {
         // Ceniza: Caer con gravedad, deriva aleatoria
         vec3 drift = vec3(snoise(vec3(pos.y * 10.0, currentTime, 0.0)), 0.0, snoise(vec3(0.0, currentTime, pos.y * 10.0)));
         vel += (gravity + drift * 2.0 + force) * deltaTime;
         pos += vel * deltaTime;
         p.color.a *= (1.0 - age_ratio);
-        
+
     } else if (p.type == TYPE_SPARK) {
         // Chispa: Subida rápida, muy caótica
         vec3 curl = curlNoise(pos * 2.0, currentTime * 2.0);
         vel += (vec3(0.0, 2.0, 0.0) * buoyancyStrength + curl * 10.0 + force) * deltaTime;
         pos += vel * deltaTime;
-        
+
         p.color = vec4(1.0, 0.8, 0.2, 1.0); // Amarillo brillante
         p.color.a *= (1.0 - age_ratio);
-        
+
     } else if (p.type >= 10u) {
         // Movimiento base para el papel (flameo en el aire / viento)
         if (p.type == TYPE_PAPER) {
@@ -145,10 +158,84 @@ void main() {
         if (currentTime > burnStartTime) {
             // Cada material tiene una duración diferente para consumirse por completo
             float burnDuration = 3.0; // Por defecto (papel) se quema en 3 segundos
+            if (p.type == TYPE_PAPER) burnDuration = 4.8;
             if (p.type == TYPE_WOOD) burnDuration = 15.0; // Madera tarda más
             if (p.type == TYPE_CEMENT) burnDuration = 50.0; // Cemento casi no se quema
-            
+
             float phase = (currentTime - burnStartTime) / burnDuration;
+
+            if (p.type == TYPE_PAPER) {
+                float grain = hash31(vec3(pos.xz * 42.0, burnStartTime));
+                vec3 basePaper = paperBaseColor(pos);
+                vec3 scorchBrown = vec3(0.34, 0.21, 0.10);
+                vec3 charBlack = vec3(0.018, 0.016, 0.014);
+                vec3 ashGray = vec3(0.12, 0.115, 0.105);
+
+                if (phase < 0.05) {
+                    float t = phase / 0.05;
+                    p.color.rgb = mix(basePaper, vec3(0.78, 0.58, 0.30), t * 0.25);
+                    p.color.a = 1.0;
+                } else if (phase < 0.16) {
+                    float t = (phase - 0.05) / 0.11;
+                    float flicker = 0.25 + 0.75 * abs(sin(currentTime * 24.0 + pos.x * 31.0 + pos.z * 17.0));
+                    vec3 flameRim = mix(vec3(1.0, 0.72, 0.15), vec3(1.0, 0.24, 0.02), t);
+                    p.color.rgb = mix(vec3(0.72, 0.43, 0.14), flameRim, flicker * (1.0 - t * 0.35));
+                    p.color.a = 1.0;
+                    p.position.w *= 0.9992;
+
+                    float flameChance = hash31(vec3(pos.xz * 70.0, burnStartTime + 5.0));
+                    if (flameChance < 0.11) {
+                        p.type = TYPE_FIRE;
+                        p.temperature = 0.72;
+                        p.maxLifetime = 0.55 + hash11(flameChance * 131.0) * 0.45;
+                        p.lifetime = p.maxLifetime;
+                        p.position.w = max(p.position.w * 3.2, 0.016);
+                        p.color = vec4(1.0, 0.48, 0.06, 0.95);
+                        vel += vec3(
+                            (hash11(flameChance * 19.0) - 0.5) * 0.35,
+                            0.75 + hash11(flameChance * 37.0) * 0.65,
+                            (hash11(flameChance * 53.0) - 0.5) * 0.35
+                        );
+                    }
+                } else if (phase < 0.42) {
+                    float t = (phase - 0.16) / 0.26;
+                    vec3 mottled = mix(scorchBrown, charBlack, smoothstep(0.0, 1.0, t + (grain - 0.5) * 0.18));
+                    p.color.rgb = mottled;
+                    p.color.a = 1.0;
+                    p.position.w *= 0.9985;
+                    pos.y += (grain - 0.5) * 0.010 * deltaTime;
+                } else if (phase < 0.82) {
+                    float t = (phase - 0.42) / 0.40;
+                    float crumble = smoothstep(0.10, 0.95, t + (grain - 0.5) * 0.35);
+                    p.color.rgb = mix(charBlack, ashGray, crumble);
+                    p.color.a = mix(0.95, 0.38, crumble);
+                    p.position.w *= 0.9965;
+                    vec3 curlDeform = curlNoise(pos * 1.4, currentTime * 0.45) * 0.0025;
+                    pos += curlDeform;
+                } else {
+                    float randDetach = hash31(vec3(pos.xz * 19.0, burnStartTime));
+
+                    if (randDetach < 0.55) {
+                        p.type = TYPE_ASH;
+                        p.maxLifetime = 2.2 + hash11(randDetach * 91.0) * 2.0;
+                        p.lifetime = p.maxLifetime;
+                        p.color = vec4(0.08, 0.075, 0.068, 0.65);
+                        p.position.w *= 0.9;
+                        vel += vec3(
+                            (hash11(randDetach * 15.0) - 0.5) * 0.45,
+                            0.30 + hash11(randDetach * 33.0) * 0.55,
+                            (hash11(randDetach * 27.0) - 0.5) * 0.45
+                        );
+                    } else {
+                        p.type = TYPE_DEAD;
+                    }
+                }
+
+                p.position.xyz = pos;
+                p.velocity.xyz = vel;
+                particles[index] = p;
+                return;
+            }
             
             if (phase < 0.1) {
                 // 1. Calentamiento rápido: Papel base -> Amarillento / Ligeramente chamuscado

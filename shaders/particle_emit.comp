@@ -167,25 +167,26 @@ void main() {
     float speed = initialSpeed + (random01(seed) - 0.5) * speedVariance;
 
     Particle p;
-    p.position = vec4(spawnPos, max(particleSize, 0.03));
+    p.position = vec4(spawnPos, max(particleSize, 0.018));
     p.velocity = vec4(dir * speed, 1.0);
 
     float r = random01(seed);
 
-    if (r < 0.75) {
+    if (r < 0.82) {
         p.type = TYPE_FIRE;
-        p.color = vec4(1.0, 0.75, 0.15, 1.0);
+        p.color = vec4(1.0, 0.62, 0.10, 0.92);
         p.temperature = max(temperature, 0.8);
-        p.maxLifetime = max(particleLife, 1.0) * (0.75 + random01(seed) * 0.5);
-    } else if (r < 0.92) {
+        p.maxLifetime = max(particleLife, 0.75) * (0.70 + random01(seed) * 0.45);
+        p.position.w *= 1.25;
+    } else if (r < 0.90) {
         p.type = TYPE_SMOKE;
-        p.color = vec4(0.28, 0.28, 0.28, 0.65);
+        p.color = vec4(0.34, 0.33, 0.31, 0.18);
         p.temperature = 0.35;
-        p.maxLifetime = max(particleLife * 1.6, 2.0);
-        p.position.w *= 1.8;
+        p.maxLifetime = max(particleLife * 1.05, 1.15);
+        p.position.w *= 1.25;
     } else {
         p.type = TYPE_SPARK;
-        p.color = vec4(1.0, 0.9, 0.25, 1.0);
+        p.color = vec4(1.0, 0.78, 0.20, 0.80);
         p.temperature = 1.0;
         p.maxLifetime = 0.6 + random01(seed) * 0.5;
         p.position.w *= 0.35;
