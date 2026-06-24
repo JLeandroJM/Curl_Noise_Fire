@@ -89,6 +89,14 @@ if(NOT EXISTS "${STB_DIR}/stb_image_write.h")
     )
 endif()
 
+if(NOT EXISTS "${STB_DIR}/stb_image.h")
+    file(DOWNLOAD
+        "https://raw.githubusercontent.com/nothings/stb/master/stb_image.h"
+        "${STB_DIR}/stb_image.h"
+        SHOW_PROGRESS
+    )
+endif()
+
 # ------------------------------------------------------------
 # Fuentes del proyecto
 # ------------------------------------------------------------

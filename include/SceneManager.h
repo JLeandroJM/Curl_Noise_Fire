@@ -7,6 +7,7 @@
 #include <vector>
 #include <memory>
 #include "Scene.h"
+#include "FrameParticleScene.h"
 #include "ParticleSystem.h"
 #include "Camera.h"
 
@@ -18,6 +19,8 @@ public:
     // Inicializa todas las escenas
     void init();
 
+    void setFrameParticleConfig(const FrameParticleSceneConfig& config);
+
     // Carga una escena específica
     bool loadScene(int index, ParticleSystem& particleSystem, Camera& camera, bool lightweight = false);
 
@@ -26,10 +29,12 @@ public:
     std::string getCurrentSceneName() const;
     float getCurrentSceneDuration() const;
     glm::vec3 getBackgroundColor() const;
+    float getCurrentEmitScale(float t) const;
 
     int getNumScenes() const { return static_cast<int>(scenes.size()); }
 
 private:
     std::vector<std::unique_ptr<Scene>> scenes;
     int currentSceneIndex = -1;
+    FrameParticleSceneConfig frameParticleConfig;
 };

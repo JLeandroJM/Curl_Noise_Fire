@@ -98,6 +98,13 @@ void ParticleSystem::createEmitterSSBO(const std::vector<EmitterConfig>& emitter
             em.particleSize
         );
 
+        gpuEm.timing = glm::vec4(
+            em.startTime,
+            em.endTime,
+            em.fadeIn,
+            em.fadeOut
+        );
+
         gpuEmitters.push_back(gpuEm);
     }
 
@@ -233,6 +240,9 @@ void ParticleSystem::dispatchEmitCompute(float deltaTime, float currentTime) {
     GLuint maxEmitThisFrame = std::max<GLuint>(256, maxParticles / 20);
     emitShader.setUint("maxParticlesToEmitThisFrame", maxEmitThisFrame);
 
+    // Escala de emisión variable en el tiempo (fuego que crece y se apaga).
+    emitShader.setFloat("u_emitScale", emitScale);
+
     // Reset atomic counter para shaders que usan atomic_uint.
     if (atomicBuffer) {
         GLuint zero = 0;
@@ -284,18 +294,21 @@ void ParticleSystem::render(const Camera& camera, float aspectRatio) {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, particleSSBO);
 
     glBindVertexArray(particleVAO);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, particleSSBO);
 
     glEnable(GL_BLEND);
-    glDisable(GL_DEPTH_TEST);
-    glDepthMask(GL_FALSE);
-
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    renderShader.setInt("renderPass", 0);
     glDrawArrays(GL_POINTS, 0, maxParticles);
 
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_FALSE);
+    renderShader.setInt("renderPass", 1);
+    glDrawArrays(GL_POINTS, 0, maxParticles);
+
     glDepthMask(GL_TRUE);
-    glEnable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
 
     glBindVertexArray(0);

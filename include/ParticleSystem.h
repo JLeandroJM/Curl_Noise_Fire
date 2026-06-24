@@ -36,6 +36,9 @@ public:
     void setBuoyancy(float b) { buoyancyStrength = b; }
     void setWind(const glm::vec3& dir, float strength);
 
+    // Escala global de emisión [0,1] (para que el fuego suba y se apague)
+    void setEmitScale(float s) { emitScale = s; }
+
     // Información
     uint32_t getMaxParticles() const { return maxParticles; }
     uint32_t getActiveParticles() const { return activeParticles; }
@@ -65,6 +68,7 @@ private:
     float buoyancyStrength = 3.0f;
     glm::vec3 windDirection = glm::vec3(0.0f);
     float windStrength = 0.0f;
+    float emitScale = 1.0f;
 
     // --- Métodos internos ---
     void createSSBO(const std::vector<Particle>& particles);

@@ -1,0 +1,13 @@
+Pon aqui tus imagenes (.png, .jpg, .bmp, .tga) para convertirlas en particulas.
+
+Ejemplo de uso (desde build\Release):
+  .\FireSimulation.exe --frames ..\..\imagenes\silla.png --lightweight --ignite-normalized 0.5 0.3
+
+El MATERIAL de cada zona se decide por el COLOR del pixel:
+  - Papel        -> blanco / casi blanco claro
+  - Madera       -> marron (r>g>b) oscuro
+  - Hoja/planta  -> verde
+  - Cemento/pared-> gris
+  - Tela/alfombra-> gris/color medio, poca saturacion
+  - Fuego        -> naranja/amarillo intenso (se enciende solo)
+  - Carbon       -> casi negro

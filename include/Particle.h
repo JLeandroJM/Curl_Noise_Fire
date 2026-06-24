@@ -24,6 +24,11 @@ enum ParticleType : uint32_t {
     TYPE_WOOD     = 12u,  // Madera
     TYPE_LEAF     = 13u,  // Hoja de árbol
     TYPE_GROUND   = 14u,  // Suelo
+    TYPE_CHAR     = 15u,  // Residuo carbonizado
+    TYPE_FABRIC   = 16u,  // Tela / cortina / cama
+    TYPE_CARPET   = 17u,  // Alfombra
+    TYPE_WALL     = 18u,  // Pared / yeso
+    TYPE_METAL_GLASS = 19u, // Metal / vidrio
 };
 
 // ---------------------------------------------------------------------------
@@ -81,6 +86,14 @@ struct EmitterConfig {
     float      temperature   = 1.0f;    // Temperatura inicial
     float      particleSize  = 0.05f;   // Tamaño base
     bool       active        = true;
+
+    // Ventana de actividad en el tiempo de escena (segundos).
+    // Permite que distintos emisores ardan en momentos distintos
+    // (p.ej. copa del árbol primero, tronco después).
+    float      startTime     = 0.0f;
+    float      endTime       = 1.0e9f;
+    float      fadeIn        = 0.5f;
+    float      fadeOut       = 1.0f;
 };
 
 // ---------------------------------------------------------------------------
@@ -92,6 +105,7 @@ struct GPUEmitter {
     glm::vec4 directionAndRate;   // xyz = direction, w = emitRate
     glm::vec4 dimensions;        // x = width, y = height, z = radius, w = particleLife
     glm::vec4 speedAndTemp;      // x = initialSpeed, y = speedVariance, z = temperature, w = particleSize
+    glm::vec4 timing;            // x = startTime, y = endTime, z = fadeIn, w = fadeOut
 };
 
 // ---------------------------------------------------------------------------

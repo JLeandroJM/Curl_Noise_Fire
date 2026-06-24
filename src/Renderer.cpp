@@ -119,8 +119,7 @@ void Renderer::renderFrame(ParticleSystem& particleSystem, const Camera& camera,
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, width, height);
 
-    // Fondo visible para no confundir con negro absoluto.
-    glClearColor(0.12f, 0.12f, 0.15f, 1.0f);
+    glClearColor(backgroundColor.r, backgroundColor.g, backgroundColor.b, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     glEnable(GL_DEPTH_TEST);

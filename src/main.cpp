@@ -15,9 +15,11 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <cstdlib>
 
 #include "Renderer.h"
 #include "SceneManager.h"
+#include "FrameParticleScene.h"
 #include "ParticleSystem.h"
 #include "Camera.h"
 #include "FrameExporter.h"
@@ -58,7 +60,7 @@ int parseSceneArgument(const std::string& value) {
     }
 
     if (name == "treefire" || name == "tree" || name == "arbol" || name == "árbol") {
-        return 2;
+        return 10;
     }
 
     if (name == "structuralfire" || name == "structural" || name == "estructura") {
@@ -73,6 +75,19 @@ int parseSceneArgument(const std::string& value) {
         return 5;
     }
 
+    if (name == "chair" || name == "chairburn" || name == "silla" || name == "sillaquemando") {
+        return 8;
+    }
+
+    if (name == "fogata" || name == "campfire" || name == "madera" || name == "wood" ||
+        name == "lena" || name == "leña") {
+        return 9;
+    }
+
+    if (name == "frameparticles" || name == "frames" || name == "frame" || name == "fma") {
+        return 11;
+    }
+
     std::cerr << "Escena no reconocida: " << value << std::endl;
     std::cerr << "Usando escena 0 por defecto.\n";
 
@@ -84,6 +99,7 @@ void printUsage() {
     std::cout << "  FireSimulation.exe --scene 0 --preview --lightweight\n";
     std::cout << "  FireSimulation.exe --scene PaperFire --preview --lightweight\n";
     std::cout << "  FireSimulation.exe --scene BuildingFire --preview --lightweight\n\n";
+    std::cout << "  FireSimulation.exe --frame-input ./input_frames --motion-from-frames --preview\n\n";
 
     std::cout << "Escenas:\n";
     std::cout << "  0 / PaperFire      = fuego sobre papel / fogata simple\n";
@@ -91,13 +107,24 @@ void printUsage() {
     std::cout << "  2 / TreeFire       = fuego en arbol\n";
     std::cout << "  3 / StructuralFire = fuego estructural\n";
     std::cout << "  4 / BuildingFire   = fuego en edificio\n";
-    std::cout << "  5 / Test5          = papel quemándose / escena final de papel\n\n";
+    std::cout << "  5 / Test5          = papel quemándose / escena final de papel\n";
+    std::cout << "  8 / ChairBurn      = silla 3D de particulas quemándose\n";
+    std::cout << "  9 / FrameParticles = frame real convertido a objetos/particulas\n\n";
 
     std::cout << "Opciones:\n";
     std::cout << "  --preview       Ventana 1280x720\n";
     std::cout << "  --lightweight   Menos carga para GPU modesta\n";
     std::cout << "  --export        Exporta video/frames segun soporte\n";
     std::cout << "                 En servidor guarda PNGs en ./frames aunque no haya OpenCV\n";
+    std::cout << "  --frame-input RUTA      Imagen o carpeta de frames para FMA\n";
+    std::cout << "  --motion-from-frames    Usa movimiento entre frames para humo/profundidad\n";
+    std::cout << "  --frame-particles N     Maximo de particulas de objeto desde frames\n";
+    std::cout << "  --frame-stride N        Fuerza muestreo de imagen: 1 ultra, 2 alto, 4 medio\n";
+    std::cout << "  --frame-world-width W   Ancho del frame en coordenadas del mundo\n";
+    std::cout << "  --frame-duration S      Duracion de la escena importada\n";
+    std::cout << "  --ignite-pixel X Y      Punto donde cae el fuego en pixeles del frame\n";
+    std::cout << "  --ignite-normalized X Y Punto donde cae el fuego normalizado [0,1]\n";
+    std::cout << "  --ignite-radius R       Radio inicial del fuego en mundo\n";
     std::cout << "  --help          Muestra esta ayuda\n\n";
 }
 
@@ -183,11 +210,30 @@ void checkOpenGLError(const std::string& where) {
     }
 }
 
+std::string resolveFfmpegExecutable() {
+    const char* userProfile = std::getenv("USERPROFILE");
+
+    if (userProfile) {
+        std::filesystem::path bundledFfmpeg =
+            std::filesystem::path(userProfile) / ".spotiflac" / "ffmpeg.exe";
+
+        if (std::filesystem::exists(bundledFfmpeg)) {
+            return bundledFfmpeg.string();
+        }
+    }
+
+    return "ffmpeg";
+}
+
 int main(int argc, char** argv) {
     int initialScene = 0;
     bool lightweight = false;
     bool exportVideo = false;
     bool previewMode = false;
+    bool sceneExplicit = false;
+    int exportStride = 1;   // guardar 1 de cada N frames simulados
+    int maxFrames = 0;      // 0 = sin limite
+    FrameParticleSceneConfig frameSceneConfig;
 
     int windowWidth = 1920;
     int windowHeight = 1080;
@@ -205,14 +251,46 @@ int main(int argc, char** argv) {
 
         if (arg == "--scene" && i + 1 < argc) {
             initialScene = parseSceneArgument(argv[++i]);
+            sceneExplicit = true;
         } else if (arg == "--lightweight") {
             lightweight = true;
         } else if (arg == "--export") {
             exportVideo = true;
+        } else if (arg == "--export-stride" && i + 1 < argc) {
+            exportStride = std::max(1, std::stoi(argv[++i]));
+        } else if (arg == "--max-frames" && i + 1 < argc) {
+            maxFrames = std::max(0, std::stoi(argv[++i]));
+        } else if (arg == "--frame-super" && i + 1 < argc) {
+            frameSceneConfig.superSample = std::clamp(std::stoi(argv[++i]), 1, 4);
         } else if (arg == "--preview") {
             previewMode = true;
             windowWidth = 1280;
             windowHeight = 720;
+        } else if ((arg == "--frame-input" || arg == "--frames") && i + 1 < argc) {
+            frameSceneConfig.enabled = true;
+            frameSceneConfig.inputPath = argv[++i];
+        } else if (arg == "--motion-from-frames" || arg == "--sfm" || arg == "--mff") {
+            frameSceneConfig.motionFromFrames = true;
+        } else if (arg == "--frame-particles" && i + 1 < argc) {
+            frameSceneConfig.maxObjectParticles = std::max(1000, std::stoi(argv[++i]));
+        } else if (arg == "--frame-stride" && i + 1 < argc) {
+            frameSceneConfig.sampleStrideOverride = std::max(1, std::stoi(argv[++i]));
+        } else if (arg == "--frame-world-width" && i + 1 < argc) {
+            frameSceneConfig.worldWidth = std::max(0.25f, std::stof(argv[++i]));
+        } else if (arg == "--frame-duration" && i + 1 < argc) {
+            frameSceneConfig.duration = std::max(0.5f, std::stof(argv[++i]));
+        } else if (arg == "--ignite-normalized" && i + 2 < argc) {
+            frameSceneConfig.hasIgnitionPoint = true;
+            frameSceneConfig.ignitionUsesPixels = false;
+            frameSceneConfig.ignitionNormX = std::clamp(std::stof(argv[++i]), 0.0f, 1.0f);
+            frameSceneConfig.ignitionNormY = std::clamp(std::stof(argv[++i]), 0.0f, 1.0f);
+        } else if (arg == "--ignite-pixel" && i + 2 < argc) {
+            frameSceneConfig.hasIgnitionPoint = true;
+            frameSceneConfig.ignitionUsesPixels = true;
+            frameSceneConfig.ignitionNormX = std::max(0.0f, std::stof(argv[++i]));
+            frameSceneConfig.ignitionNormY = std::max(0.0f, std::stof(argv[++i]));
+        } else if (arg == "--ignite-radius" && i + 1 < argc) {
+            frameSceneConfig.ignitionRadius = std::max(0.005f, std::stof(argv[++i]));
         } else if (arg == "--no-debug-red") {
             debugRedRectangle = false;
         } else {
@@ -225,6 +303,14 @@ int main(int argc, char** argv) {
     std::cout << "Preview: " << (previewMode ? "true" : "false") << "\n";
     std::cout << "Lightweight: " << (lightweight ? "true" : "false") << "\n";
     std::cout << "Export: " << (exportVideo ? "true" : "false") << "\n";
+    std::cout << "Frame input: " << (frameSceneConfig.enabled ? frameSceneConfig.inputPath : "none") << "\n";
+    std::cout << "Motion-from-frames: " << (frameSceneConfig.motionFromFrames ? "true" : "false") << "\n";
+    std::cout << "Ignition point: "
+              << (frameSceneConfig.hasIgnitionPoint ? "true" : "false")
+              << " (" << frameSceneConfig.ignitionNormX << ", "
+              << frameSceneConfig.ignitionNormY
+              << (frameSceneConfig.ignitionUsesPixels ? " px" : " normalized")
+              << ")\n";
     std::cout << "Debug red rectangle: " << (debugRedRectangle ? "true" : "false") << "\n";
     std::cout << "Resolution: " << windowWidth << "x" << windowHeight << "\n";
     std::cout << "============================\n\n";
@@ -293,7 +379,12 @@ int main(int argc, char** argv) {
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
 
     SceneManager sceneManager;
+    sceneManager.setFrameParticleConfig(frameSceneConfig);
     sceneManager.init();
+
+    if (frameSceneConfig.enabled && !sceneExplicit) {
+        initialScene = sceneManager.getNumScenes() - 1;
+    }
 
     ParticleSystem particleSystem;
     Camera camera;
@@ -326,18 +417,28 @@ int main(int argc, char** argv) {
 
     FrameExporter exporter;
     std::filesystem::path framesDir = "frames";
+    std::string outputName;
+    bool directVideoWriterStarted = false;
 
     if (exportVideo) {
         std::filesystem::create_directories(framesDir);
 
-        std::string outputName = "output_scene" + std::to_string(initialScene) + ".mp4";
+        for (const auto& entry : std::filesystem::directory_iterator(framesDir)) {
+            if (entry.is_regular_file() &&
+                entry.path().extension() == ".png" &&
+                entry.path().filename().string().rfind("frame_", 0) == 0) {
+                std::filesystem::remove(entry.path());
+            }
+        }
+
+        outputName = "output_scene" + std::to_string(initialScene) + ".mp4";
 
         std::cout << "Inicializando exportador: " << outputName << "\n";
         std::cout << "Tambien se guardaran PNGs en: " << framesDir.string() << "\n";
 
         // Si OpenCV no está disponible, esto puede fallar, pero NO detiene la exportación.
         // Igual guardaremos frames PNG y luego los convertimos con ffmpeg.
-        exporter.initVideoWriter(outputName, windowWidth, windowHeight, 30.0);
+        directVideoWriterStarted = exporter.initVideoWriter(outputName, windowWidth, windowHeight, 30.0);
     }
 
     float lastFrame = static_cast<float>(glfwGetTime());
@@ -345,6 +446,8 @@ int main(int argc, char** argv) {
     float dtFixed = 1.0f / 30.0f;
 
     int frameCount = 0;
+    int exportedFrameCount = 0;
+    int simulatedFrameIndex = 0;
     float fpsTimer = 0.0f;
 
     std::cout << "Entrando al loop principal...\n";
@@ -364,6 +467,7 @@ int main(int argc, char** argv) {
         float dt = exportVideo ? dtFixed : deltaTime;
 
         camera.update(simulatedTime);
+        particleSystem.setEmitScale(sceneManager.getCurrentEmitScale(simulatedTime));
         particleSystem.update(dt, simulatedTime);
         checkOpenGLError("particleSystem.update");
 
@@ -378,21 +482,31 @@ int main(int argc, char** argv) {
         }
 
         if (exportVideo) {
-            // 1) Intentar agregar el frame al video directo si OpenCV está disponible.
-            exporter.addFrame(windowWidth, windowHeight);
+            // Guardar solo 1 de cada exportStride frames simulados.
+            if (simulatedFrameIndex % exportStride == 0) {
+                exporter.addFrame(windowWidth, windowHeight);
 
-            // 2) Guardar siempre PNG, para servidores sin OpenCV o sin salida gráfica real.
-            std::ostringstream frameName;
-            frameName << "frame_"
-                      << std::setw(4)
-                      << std::setfill('0')
-                      << frameCount
-                      << ".png";
+                std::ostringstream frameName;
+                frameName << "frame_"
+                          << std::setw(4)
+                          << std::setfill('0')
+                          << exportedFrameCount
+                          << ".png";
 
-            std::filesystem::path framePath = framesDir / frameName.str();
+                std::filesystem::path framePath = framesDir / frameName.str();
 
-            if (!exporter.saveFrameAsPNG(framePath.string(), windowWidth, windowHeight)) {
-                std::cerr << "No se pudo guardar PNG: " << framePath.string() << "\n";
+                if (!exporter.saveFrameAsPNG(framePath.string(), windowWidth, windowHeight)) {
+                    std::cerr << "No se pudo guardar PNG: " << framePath.string() << "\n";
+                }
+
+                exportedFrameCount++;
+            }
+
+            simulatedFrameIndex++;
+
+            if (maxFrames > 0 && exportedFrameCount >= maxFrames) {
+                std::cout << "Limite de frames alcanzado (" << maxFrames << "). Cerrando export.\n";
+                break;
             }
 
             if (simulatedTime >= sceneDuration) {
@@ -425,9 +539,28 @@ int main(int argc, char** argv) {
     if (exportVideo) {
         exporter.finish();
         std::cout << "Export finalizado. Frames PNG guardados en ./frames\n";
-        std::cout << "Para convertir a MP4 usa:\n";
-        std::cout << "ffmpeg -y -framerate 30 -i frames/frame_%04d.png -c:v libx264 -pix_fmt yuv420p papel_scene"
-                  << initialScene << ".mp4\n";
+
+        if (directVideoWriterStarted) {
+            std::cout << "Video MP4 guardado por OpenCV en: " << outputName << "\n";
+        } else {
+            std::ostringstream ffmpegCommand;
+            ffmpegCommand << resolveFfmpegExecutable()
+                          << " -y -framerate 30 -i \""
+                          << (framesDir / "frame_%04d.png").string()
+                          << "\" -c:v libx264 -pix_fmt yuv420p \""
+                          << outputName
+                          << "\"";
+
+            std::cout << "Generando MP4 con ffmpeg: " << outputName << "\n";
+            int ffmpegResult = std::system(ffmpegCommand.str().c_str());
+
+            if (ffmpegResult == 0) {
+                std::cout << "Video MP4 guardado en: " << outputName << "\n";
+            } else {
+                std::cerr << "No se pudo generar el MP4 automaticamente. Comando usado:\n"
+                          << ffmpegCommand.str() << "\n";
+            }
+        }
     }
 
     std::cout << "Cerrando aplicacion.\n";

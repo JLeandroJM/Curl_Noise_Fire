@@ -65,4 +65,9 @@ public:
 
     // Color de fondo
     virtual glm::vec3 getBackgroundColor() const { return glm::vec3(0.02f); }
+
+    // Intensidad de emisión [0,1] en función del tiempo de escena.
+    // Permite que el fuego crezca, llegue al máximo y se apague.
+    // Por defecto 1.0 (emisión constante).
+    virtual float getEmitScale(float /*t*/) const { return 1.0f; }
 };

@@ -33,6 +33,7 @@ struct Emitter {
     vec4 directionAndRate;   // xyz = direction, w = emitRate
     vec4 dimensions;         // x = width, y = height, z = radius, w = particleLife
     vec4 speedAndTemp;       // x = initialSpeed, y = speedVariance, z = temperature, w = particleSize
+    vec4 timing;             // x = startTime, y = endTime, z = fadeIn, w = fadeOut
 };
 
 layout(std430, binding = 1) readonly buffer EmitterBuffer {
@@ -43,6 +44,7 @@ uniform float u_deltaTime;
 uniform float u_time;
 uniform uint u_maxParticles;
 uniform uint u_numEmitters;
+uniform float u_emitScale = 1.0;
 
 uint hash(uint x) {
     x = (x ^ 61u) ^ (x >> 16u);
@@ -122,7 +124,20 @@ void main() {
 
     // Probabilidad aproximada para emitir emitRate partículas por segundo.
     float particlesPerEmitterPool = float(u_maxParticles) / float(max(u_numEmitters, 1u));
-    float probability = clamp((emitRate * u_deltaTime) / particlesPerEmitterPool, 0.0, 1.0);
+    // Ventana de actividad temporal del emisor (copa primero, tronco despues...).
+    float tStart = em.timing.x;
+    float tEnd   = em.timing.y;
+    float fadeIn = em.timing.z;
+    float fadeOut = em.timing.w;
+    float envelope = 0.0;
+    if (u_time >= tStart && u_time <= tEnd) {
+        envelope = 1.0;
+        if (fadeIn > 0.0001)  envelope = min(envelope, (u_time - tStart) / fadeIn);
+        if (fadeOut > 0.0001) envelope = min(envelope, (tEnd - u_time) / fadeOut);
+        envelope = clamp(envelope, 0.0, 1.0);
+    }
+
+    float probability = clamp((emitRate * u_emitScale * envelope * u_deltaTime) / particlesPerEmitterPool, 0.0, 1.0);
 
     if (random01(seed) > probability) {
         return;
@@ -167,22 +182,23 @@ void main() {
     float speed = initialSpeed + (random01(seed) - 0.5) * speedVariance;
 
     Particle p;
-    p.position = vec4(spawnPos, max(particleSize, 0.03));
+    p.position = vec4(spawnPos, max(particleSize, 0.018));
     p.velocity = vec4(dir * speed, 1.0);
 
     float r = random01(seed);
 
-    if (r < 0.75) {
+    if (r < 0.78) {
         p.type = TYPE_FIRE;
-        p.color = vec4(1.0, 0.75, 0.15, 1.0);
-        p.temperature = max(temperature, 0.8);
-        p.maxLifetime = max(particleLife, 1.0) * (0.75 + random01(seed) * 0.5);
+        p.color = vec4(1.0, 0.72 + random01(seed) * 0.20, 0.06, 0.95);
+        p.temperature = max(temperature, 0.92);
+        p.maxLifetime = max(particleLife, 0.85) * (0.85 + random01(seed) * 0.55);
+        p.position.w *= 1.20 + random01(seed) * 0.75;
     } else if (r < 0.92) {
         p.type = TYPE_SMOKE;
-        p.color = vec4(0.28, 0.28, 0.28, 0.65);
+        p.color = vec4(0.30, 0.30, 0.285, 0.16);
         p.temperature = 0.35;
-        p.maxLifetime = max(particleLife * 1.6, 2.0);
-        p.position.w *= 1.8;
+        p.maxLifetime = max(particleLife * 1.6, 1.4);
+        p.position.w *= 1.35;
     } else {
         p.type = TYPE_SPARK;
         p.color = vec4(1.0, 0.9, 0.25, 1.0);

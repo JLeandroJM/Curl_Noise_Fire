@@ -12,6 +12,11 @@
 #define TYPE_WOOD     12u
 #define TYPE_LEAF     13u
 #define TYPE_GROUND   14u
+#define TYPE_CHAR     15u
+#define TYPE_FABRIC   16u
+#define TYPE_CARPET   17u
+#define TYPE_WALL     18u
+#define TYPE_METAL_GLASS 19u
 
 // Estructura de Partícula
 struct Particle {
