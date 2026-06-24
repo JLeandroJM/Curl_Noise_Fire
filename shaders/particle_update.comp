@@ -124,9 +124,9 @@ void main() {
         vel += (vec3(0.0, 0.5, 0.0) + force) * deltaTime;
         pos += vel * deltaTime;
 
-        p.position.w += deltaTime * 0.35; // Aumentar tamaño progresivamente
-        p.color = vec4(0.42, 0.40, 0.37, 0.20); // Gris liviano
-        p.color.a *= max(0.0, 1.0 - age_ratio * 2.4); // Desvanecer rápido
+        p.position.w += deltaTime * 2.0; // Aumentar tamaño progresivamente
+        p.color = vec4(0.5, 0.5, 0.5, 1.0); // Gris
+        p.color.a *= max(0.0, 1.0 - age_ratio * 1.5); // Desvanecer rápido
 
     } else if (p.type == TYPE_ASH) {
         // Ceniza: Caer con gravedad, deriva aleatoria

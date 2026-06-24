@@ -98,7 +98,7 @@ file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS
 
 add_executable(FireSimulation
     ${SOURCES}
-)
+        include/PaperFireScene.h)
 
 # ------------------------------------------------------------
 # Includes

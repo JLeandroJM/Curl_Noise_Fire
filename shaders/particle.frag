@@ -43,8 +43,8 @@ void main() {
         color.rgb = mix(color.rgb * 0.70, vec3(1.35, 0.82, 0.24), core);
         alpha = glow * 0.72 + core * 0.28;
     } else if (fs_in.type == 3u) { // SMOKE
-        alpha = pow(alpha, 2.2) * 0.12;
-        color.rgb = mix(color.rgb, vec3(0.62), 0.35);
+        alpha = pow(alpha, 1.8) * 0.36;
+        color.rgb *= 0.75;
     } else if (fs_in.type == 5u) { // SPARK
         alpha = pow(alpha, 3.2);
     } else if (fs_in.type == 4u) { // ASH

@@ -21,7 +21,7 @@ uniform vec3 cameraRight;
 uniform vec3 cameraUp;
 
 void main() {
-    if (gs_in[0].type == 0u || gs_in[0].type == 10u) {
+    if (gs_in[0].type == 0u) {
         return;
     }
 

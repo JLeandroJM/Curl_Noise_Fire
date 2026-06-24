@@ -37,15 +37,9 @@ private:
     GLuint particleVAO = 0;
     GLuint atomicBuffer = 0;
 
-    GLuint paperMeshVAO = 0;
-    GLuint paperMeshVBO = 0;
-    GLuint paperMeshEBO = 0;
-    uint32_t paperMeshIndexCount = 0;
-
     Shader updateShader;
     Shader emitShader;
     Shader renderShader;
-    Shader paperMeshShader;
 
     uint32_t maxParticles = 0;
     uint32_t activeParticles = 0;
@@ -57,14 +51,10 @@ private:
     glm::vec3 windDirection = glm::vec3(0.0f);
     float windStrength = 0.0f;
 
-    float lastRenderTime = 0.0f;
-
     void createSSBO(const std::vector<Particle>& particles);
     void createEmitterSSBO(const std::vector<EmitterConfig>& emitters);
-    void createPaperMesh(const std::vector<Particle>& particles);
     void loadShaders(const std::string& shaderDir);
     void setupVAO();
-    void renderPaperMesh(const Camera& camera, float aspectRatio, float currentTime);
     void dispatchUpdateCompute(float deltaTime, float currentTime);
     void dispatchEmitCompute(float deltaTime, float currentTime);
     void setComputeUniforms(Shader& shader, float deltaTime, float currentTime);
