@@ -340,15 +340,8 @@ public:
             }
         }
 
-        // Emisor de "chispa" inicial solo para encender el fuego
-        EmitterConfig spark;
-        spark.position = ignitionPoints[0];
-        spark.shape = EmitterShape::POINT;
-        spark.emitRate = 100.0f;
-        spark.particleLife = 1.0f;
-        spark.initialSpeed = 0.5f;
-        spark.particleSize = 0.03f;
-        emitters.push_back(spark);
+        // El fuego visible ahora nace de las particulas del papel que entran
+        // en combustion, asi no queda una llama fija en la esquina inicial.
 
         // Configuración de Curl Noise para las llamas
         curlParams.frequency = 3.0f;

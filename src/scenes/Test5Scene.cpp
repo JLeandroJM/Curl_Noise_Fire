@@ -49,19 +49,8 @@ public:
         std::vector<glm::vec3> ignitionPoints = { paperCenter - glm::vec3(0.6f, 0.0f, 0.4f) };
         float baseBurnSpeed = 0.085f;
 
-        EmitterConfig flameFront;
-        flameFront.position = ignitionPoints[0] + glm::vec3(0.04f, 0.018f, 0.04f);
-        flameFront.shape = EmitterShape::DISK;
-        flameFront.radius = 0.045f;
-        flameFront.direction = glm::vec3(0.08f, 1.0f, 0.05f);
-        flameFront.emitRate = lightweight ? 3000.0f : 5000.0f;
-        flameFront.particleLife = 0.55f;
-        flameFront.lifeVariance = 0.22f;
-        flameFront.initialSpeed = 0.42f;
-        flameFront.speedVariance = 0.18f;
-        flameFront.temperature = 1.0f;
-        flameFront.particleSize = lightweight ? 0.014f : 0.011f;
-        emitters.push_back(flameFront);
+        // Las llamas nacen de las particulas de papel que estan en fase de
+        // combustion, para que el frente avance con el deterioro de la hoja.
         
         // PROPAGACIÓN REALISTA (Simulación de humedad/espesor)
         std::mt19937 rng(42);
@@ -76,15 +65,23 @@ public:
                 }
                 
                 // Ruido más agresivo para crear islas que tardan mucho en quemarse (zonas húmedas/densas)
-                float noise = sin(pos.x * 10.0f) * cos(pos.z * 9.0f) * 0.85f +
-                              sin(pos.x * 23.0f + 1.2f) * cos(pos.z * 21.0f + 0.5f) * 0.45f +
-                              dist(rng) * 0.35f;
+                glm::vec2 fromIgnition(pos.x - ignitionPoints[0].x, pos.z - ignitionPoints[0].z);
+                float diagonalPush = glm::dot(
+                    glm::normalize(fromIgnition + glm::vec2(0.001f)),
+                    glm::normalize(glm::vec2(1.0f, 0.72f))
+                );
+
+                float tendrils = sin(pos.x * 18.0f + pos.z * 10.0f)
+                               + 0.55f * sin(pos.x * 37.0f - pos.z * 24.0f + 1.7f);
+                float dampPatches = sin(pos.x * 7.0f - 0.8f) * cos(pos.z * 6.5f + 0.4f);
+                float noise = tendrils * 0.42f + dampPatches * 0.70f + dist(rng) * 0.22f;
                               
-                float thermalAcceleration = std::pow(minDist, 0.90f);
+                float thermalAcceleration = std::pow(minDist, 0.88f);
                 float fragility = (dist(rng) > 0.92f) ? 0.35f : 1.0f;
                 
                 // burnTime variará entre 0 y ~12 segundos a lo largo de la hoja
-                float burnTime = (thermalAcceleration / baseBurnSpeed) + noise * 1.5f * fragility;
+                float burnTime = (thermalAcceleration / baseBurnSpeed) + noise * 1.15f * fragility;
+                burnTime -= glm::clamp(diagonalPush, 0.0f, 1.0f) * 0.35f;
                 p.velocity.w = std::max(0.0f, burnTime);
             }
         }

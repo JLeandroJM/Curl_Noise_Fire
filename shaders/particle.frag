@@ -3,6 +3,7 @@
 in FragData {
     vec2 uv;
     vec4 color;
+    float paperFlame;
     flat uint type;
 } fs_in;
 
@@ -41,10 +42,31 @@ void main() {
         // Núcleo brillante + halo muy suave. Alpha bajo para que las
         // partículas se acumulen aditivamente y formen una masa continua
         // en vez de discos separados.
-        float core = smoothstep(0.55, 0.0, r);
-        float glow = smoothstep(1.0, 0.10, r);
-        color.rgb = mix(color.rgb * 0.85, vec3(1.4, 0.85, 0.28), core);
-        alpha = glow * 0.28 + core * 0.30;
+        if (fs_in.paperFlame > 0.5) {
+            float y = fs_in.uv.y;
+            float x = abs(coord.x);
+            float edgeNoise = sin(x * 27.0 + y * 33.0 + color.g * 11.0) * 0.5
+                            + sin(x * 55.0 - y * 17.0 + color.r * 7.0) * 0.5;
+            float width = 0.76 + edgeNoise * 0.08;
+            float crawl = 1.0 - smoothstep(width * 0.35, width, x);
+            float lift = smoothstep(0.03, 0.22, y) * (1.0 - smoothstep(0.58, 0.92, y));
+            float hotCenter = (1.0 - smoothstep(0.0, 0.20, x)) * smoothstep(0.10, 0.34, y) * (1.0 - smoothstep(0.46, 0.78, y));
+            float smokeCut = smoothstep(0.78, 1.0, y) * (0.20 + 0.16 * edgeNoise);
+            color.rgb = mix(color.rgb * 0.90, vec3(1.25, 0.74, 0.20), hotCenter);
+            alpha = max(0.0, crawl * lift * 0.26 + hotCenter * 0.18 - smokeCut);
+        } else {
+            float y = fs_in.uv.y;
+            float x = abs(coord.x);
+            float width = mix(0.95, 0.18, smoothstep(0.12, 1.0, y));
+            float tongue = 1.0 - smoothstep(width * 0.35, width, x);
+            float base = smoothstep(0.0, 0.22, y);
+            float tipFade = 1.0 - smoothstep(0.82, 1.0, y);
+            float core = tongue * base * tipFade;
+            float glow = (1.0 - smoothstep(0.0, width * 1.25, x)) * base * (1.0 - smoothstep(0.94, 1.0, y));
+            float hotCenter = (1.0 - smoothstep(0.0, width * 0.30, x)) * smoothstep(0.08, 0.36, y) * tipFade;
+            color.rgb = mix(color.rgb * 0.92, vec3(1.35, 0.86, 0.28), hotCenter);
+            alpha = glow * 0.20 + core * 0.36 + hotCenter * 0.22;
+        }
     } else if (fs_in.type == 3u) { // SMOKE
         alpha = pow(alpha, 2.2) * 0.16;
         color.rgb *= 0.75;

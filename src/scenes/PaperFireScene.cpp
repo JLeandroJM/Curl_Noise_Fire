@@ -58,18 +58,8 @@ public:
         curlParams.timeScale = 1.5f;
         curlParams.boundaryWidth = 0.1f;
 
-        // Emitter
-        EmitterConfig spark;
-        spark.position = ignitionPoints[0];
-        spark.shape = EmitterShape::POINT;
-        spark.direction = glm::vec3(0.15f, 1.0f, 0.10f);
-        spark.emitRate = lightweight ? 500.0f : 900.0f;
-        spark.particleLife = 0.9f;
-        spark.lifeVariance = 0.35f;
-        spark.initialSpeed = 0.9f;
-        spark.speedVariance = 0.5f;
-        spark.particleSize = 0.022f;
-        emitters.push_back(spark);
+        // El fuego visible sale del frente de papel en combustion, no de un
+        // emisor fijo en la esquina.
 
         // Camera path
         cameraPath.totalDuration = getDuration();

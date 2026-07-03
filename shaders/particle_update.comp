@@ -66,6 +66,17 @@ vec3 paperBaseColor(vec3 pos) {
     return vec3(0.96, 0.93, 0.84) + fiber;
 }
 
+vec3 paperFlameColor(float t, float flicker, float grain) {
+    vec3 coalBase = vec3(0.42, 0.085, 0.018);
+    vec3 whiteCore = vec3(1.00, 0.94, 0.58);
+    vec3 amber = vec3(1.00, 0.50, 0.075);
+    vec3 darkRim = vec3(0.58, 0.070, 0.012);
+    vec3 hotCore = mix(whiteCore, amber, smoothstep(0.12, 0.68, t));
+    vec3 rim = mix(amber, darkRim, smoothstep(0.42, 1.0, t + grain * 0.24));
+    vec3 color = mix(hotCore, rim, 0.30 + 0.26 * flicker);
+    return mix(coalBase, color, smoothstep(0.0, 0.20, t));
+}
+
 void main() {
     uint index = gl_GlobalInvocationID.x;
     if (index >= particles.length()) return;
@@ -200,38 +211,32 @@ void main() {
 
                 if (phase < 0.05) {
                     float t = phase / 0.05;
-                    p.color.rgb = mix(basePaper, vec3(0.78, 0.58, 0.30), t * 0.25);
+                    float stain = smoothstep(0.55, 1.0, grain);
+                    vec3 dryPaper = mix(basePaper, vec3(0.73, 0.58, 0.34), t * 0.30);
+                    p.color.rgb = mix(dryPaper, vec3(0.42, 0.25, 0.10), stain * t * 0.18);
                     p.color.a = 1.0;
-                } else if (phase < 0.16) {
-                    float t = (phase - 0.05) / 0.11;
-                    float flicker = 0.25 + 0.75 * abs(sin(currentTime * 24.0 + pos.x * 31.0 + pos.z * 17.0));
-                    vec3 flameRim = mix(vec3(1.0, 0.72, 0.15), vec3(1.0, 0.24, 0.02), t);
-                    p.color.rgb = mix(vec3(0.72, 0.43, 0.14), flameRim, flicker * (1.0 - t * 0.35));
-                    p.color.a = 1.0;
-                    p.position.w *= 0.9992;
-
-                    float flameChance = hash31(vec3(pos.xz * 70.0, burnStartTime + 5.0));
-                    if (flameChance < 0.16) {
-                        p.type = TYPE_FIRE;
-                        p.temperature = 0.92;
-                        // Vida corta: la llama se queda pegada al borde, no forma penacho alto
-                        p.maxLifetime = 0.42 + hash11(flameChance * 131.0) * 0.35;
-                        p.lifetime = p.maxLifetime;
-                        p.position.w = max(p.position.w * 2.0, 0.012);
-                        p.color = vec4(1.0, 0.7, 0.25, 0.95);
-                        vel += vec3(
-                            (hash11(flameChance * 19.0) - 0.5) * 0.16,
-                            0.55 + hash11(flameChance * 37.0) * 0.40,
-                            (hash11(flameChance * 53.0) - 0.5) * 0.16
-                        );
-                    }
+                    p.position.w *= 1.0 - deltaTime * 0.08 * t;
+                } else if (phase < 0.22) {
+                    float t = (phase - 0.05) / 0.17;
+                    float fastFlicker = abs(sin(currentTime * 31.0 + pos.x * 37.0 + pos.z * 23.0));
+                    float slowFlicker = abs(sin(currentTime * 11.0 + pos.x * 13.0 - pos.z * 19.0));
+                    float flicker = 0.22 + 0.58 * fastFlicker + 0.20 * slowFlicker;
+                    float lick = smoothstep(0.0, 0.28, t) * (1.0 - smoothstep(0.82, 1.0, t));
+                    p.color.rgb = paperFlameColor(t, flicker, grain - 0.5);
+                    p.color.a = 0.78 + 0.16 * flicker;
+                    p.position.w *= 1.0 + deltaTime * (0.30 + flicker * 0.20) * lick;
+                    p.position.w = min(p.position.w, 0.0132);
+                    pos.y += (0.0018 + 0.0040 * flicker) * lick * deltaTime;
+                    pos.xz += curlNoise(vec3(pos.xz * 2.25, pos.y), currentTime * 0.62).xz * 0.0017 * lick;
                 } else if (phase < 0.42) {
-                    float t = (phase - 0.16) / 0.26;
+                    float t = (phase - 0.22) / 0.20;
                     vec3 mottled = mix(scorchBrown, charBlack, smoothstep(0.0, 1.0, t + (grain - 0.5) * 0.18));
-                    p.color.rgb = mottled;
+                    float emberPulse = 0.5 + 0.5 * sin(currentTime * 17.0 + pos.x * 41.0 + pos.z * 29.0);
+                    float ember = smoothstep(0.02, 0.32, t) * (1.0 - smoothstep(0.46, 0.88, t));
+                    p.color.rgb = mix(mottled, vec3(0.78, 0.16, 0.025), ember * emberPulse * 0.22);
                     p.color.a = 1.0;
-                    p.position.w *= 0.9985;
-                    pos.y += (grain - 0.5) * 0.010 * deltaTime;
+                    p.position.w *= 1.0 - deltaTime * (0.26 + grain * 0.20);
+                    pos.y += (grain - 0.5) * 0.014 * deltaTime;
                 } else if (phase < 0.82) {
                     float t = (phase - 0.42) / 0.40;
                     float crumble = smoothstep(0.10, 0.95, t + (grain - 0.5) * 0.35);
