@@ -156,13 +156,14 @@ void main() {
         dir = vec3(0.0, 1.0, 0.0);
     }
 
+    // Dispersión mayormente vertical: poco ruido horizontal para no abrir abanico
     vec3 noiseDir = vec3(
-        random01(seed) - 0.5,
-        random01(seed) * 0.5,
-        random01(seed) - 0.5
+        (random01(seed) - 0.5) * 0.5,
+        random01(seed) * 0.8,
+        (random01(seed) - 0.5) * 0.5
     );
 
-    dir = normalize(dir + noiseDir * 0.35);
+    dir = normalize(dir + noiseDir * 0.18);
 
     float speed = initialSpeed + (random01(seed) - 0.5) * speedVariance;
 
@@ -172,13 +173,13 @@ void main() {
 
     float r = random01(seed);
 
-    if (r < 0.82) {
+    if (r < 0.92) {
         p.type = TYPE_FIRE;
         p.color = vec4(1.0, 0.62, 0.10, 0.92);
         p.temperature = max(temperature, 0.8);
         p.maxLifetime = max(particleLife, 0.75) * (0.70 + random01(seed) * 0.45);
-        p.position.w *= 1.25;
-    } else if (r < 0.98) {
+        p.position.w *= 0.9;
+    } else if (r < 0.99) {
         p.type = TYPE_SMOKE;
         p.color = vec4(0.20, 0.19, 0.18, 0.42);
         p.temperature = 0.35;

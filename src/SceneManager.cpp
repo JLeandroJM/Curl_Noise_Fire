@@ -240,6 +240,7 @@
 #include <iostream>
 #include <random>
 #include "../include/Test5Scene.h"
+#include "../include/Test6Scene.h"
 #include "../include/PaperFireScene.h"
 
 // =============================================================================
@@ -644,6 +645,7 @@ void SceneManager::init() {
     scenes.push_back(std::make_unique<Scene3_Explosion>());
     scenes.push_back(std::make_unique<Scene4_FireStorm>());
     scenes.push_back(createTest5Scene());
+    scenes.push_back(createTest6Scene());
     scenes.push_back(createPaperFireScene());
 }
 

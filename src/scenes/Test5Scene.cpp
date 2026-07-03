@@ -33,7 +33,7 @@ public:
 
         float paperParticleSize = lightweight ? 0.0048f : 0.0042f;
 
-        // Quitamos la mesa. Solo generamos el papel.
+
         glm::vec3 paperCenter(0.0f, 0.0f, 0.0f);
         GeometryUtils::generatePlane(
             particles,
@@ -52,15 +52,15 @@ public:
         EmitterConfig flameFront;
         flameFront.position = ignitionPoints[0] + glm::vec3(0.04f, 0.018f, 0.04f);
         flameFront.shape = EmitterShape::DISK;
-        flameFront.radius = 0.055f;
-        flameFront.direction = glm::vec3(0.14f, 1.0f, 0.08f);
-        flameFront.emitRate = lightweight ? 1800.0f : 3400.0f;
-        flameFront.particleLife = 0.85f;
-        flameFront.lifeVariance = 0.30f;
-        flameFront.initialSpeed = 0.72f;
-        flameFront.speedVariance = 0.36f;
+        flameFront.radius = 0.045f;
+        flameFront.direction = glm::vec3(0.08f, 1.0f, 0.05f);
+        flameFront.emitRate = lightweight ? 3000.0f : 5000.0f;
+        flameFront.particleLife = 0.55f;
+        flameFront.lifeVariance = 0.22f;
+        flameFront.initialSpeed = 0.42f;
+        flameFront.speedVariance = 0.18f;
         flameFront.temperature = 1.0f;
-        flameFront.particleSize = lightweight ? 0.020f : 0.016f;
+        flameFront.particleSize = lightweight ? 0.014f : 0.011f;
         emitters.push_back(flameFront);
         
         // PROPAGACIÓN REALISTA (Simulación de humedad/espesor)

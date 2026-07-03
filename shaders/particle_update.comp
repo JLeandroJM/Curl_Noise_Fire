@@ -92,22 +92,49 @@ void main() {
     vec3 force = windDirection * windStrength;
 
     if (p.type == TYPE_FIRE) {
-        // Enfriamiento progresivo
-        p.temperature -= deltaTime * 0.5;
+        // Enfriamiento progresivo (se acelera al final de la vida)
+        p.temperature -= deltaTime * (0.55 + age_ratio * 0.55);
         p.temperature = max(p.temperature, 0.0);
 
-        // Flotabilidad basada en temperatura térmica
-        vec3 buoyancy = vec3(0.0, 1.0, 0.0) * buoyancyStrength * p.temperature;
+        // Flotabilidad: el aire caliente sube con fuerza
+        vec3 buoyancy = vec3(0.0, 1.0, 0.0) * buoyancyStrength * (0.7 + p.temperature);
 
-        // Ruido Curl para movimiento turbulento tipo fluido
-        vec3 curl = curlNoise(pos, currentTime);
+        // Turbulencia: sobre todo horizontal (flameo), débil y calmándose al subir.
+        // El componente vertical del curl se reduce para no romper la columna.
+        vec3 curl = curlNoise(pos * 1.6, currentTime * 1.4);
+        curl.y *= 0.25;
+        float turb = mix(1.4, 0.5, age_ratio);
+        vel += (buoyancy + curl * turb + force) * deltaTime;
 
-        vel += (buoyancy + curl * 5.0 + force) * deltaTime;
+        // Convergencia horizontal fuerte hacia el eje: mantiene la columna/lengua
+        vel.xz *= (1.0 - deltaTime * 3.0);
         pos += vel * deltaTime;
 
-        // Actualizar color por temperatura y atenuar alpha
-        p.color = getFireColor(p.temperature);
-        p.color.a *= (1.0 - age_ratio);
+        // La llama se adelgaza al subir (se afina hacia la punta)
+        p.position.w *= (1.0 - deltaTime * 0.25);
+
+        // Gradiente cálido dependiente de la temperatura — NUNCA llega a negro
+        vec3 hot  = vec3(1.0, 0.95, 0.62);  // base amarilla-blanca
+        vec3 mid  = vec3(1.0, 0.46, 0.09);  // naranja
+        vec3 cool = vec3(0.80, 0.14, 0.02); // rojo apagado
+        float ht = clamp(p.temperature, 0.0, 1.0);
+        p.color.rgb = (ht > 0.5) ? mix(mid, hot, (ht - 0.5) / 0.5)
+                                 : mix(cool, mid, ht / 0.5);
+        // Alpha: nace, se sostiene y muere suave en la última fase de vida
+        p.color.a = smoothstep(1.0, 0.5, age_ratio);
+
+        // Al enfriarse, una pequeña parte se convierte en humo (el resto muere)
+        if (p.temperature < 0.16) {
+            if (hash31(pos + float(index)) < 0.08) {
+                p.type = TYPE_SMOKE;
+                p.maxLifetime = 1.0 + hash11(float(index)) * 0.9;
+                p.lifetime = p.maxLifetime;
+                p.color = vec4(0.40, 0.39, 0.38, 1.0);
+                p.position.w = max(p.position.w * 1.4, 0.02);
+            } else {
+                p.type = TYPE_DEAD;
+            }
+        }
 
     } else if (p.type == TYPE_EMBER) {
         // Movimiento lento y caída ligera con gravedad
@@ -184,17 +211,18 @@ void main() {
                     p.position.w *= 0.9992;
 
                     float flameChance = hash31(vec3(pos.xz * 70.0, burnStartTime + 5.0));
-                    if (flameChance < 0.11) {
+                    if (flameChance < 0.16) {
                         p.type = TYPE_FIRE;
-                        p.temperature = 0.72;
-                        p.maxLifetime = 0.55 + hash11(flameChance * 131.0) * 0.45;
+                        p.temperature = 0.92;
+                        // Vida corta: la llama se queda pegada al borde, no forma penacho alto
+                        p.maxLifetime = 0.42 + hash11(flameChance * 131.0) * 0.35;
                         p.lifetime = p.maxLifetime;
-                        p.position.w = max(p.position.w * 3.2, 0.016);
-                        p.color = vec4(1.0, 0.48, 0.06, 0.95);
+                        p.position.w = max(p.position.w * 2.0, 0.012);
+                        p.color = vec4(1.0, 0.7, 0.25, 0.95);
                         vel += vec3(
-                            (hash11(flameChance * 19.0) - 0.5) * 0.35,
-                            0.75 + hash11(flameChance * 37.0) * 0.65,
-                            (hash11(flameChance * 53.0) - 0.5) * 0.35
+                            (hash11(flameChance * 19.0) - 0.5) * 0.16,
+                            0.55 + hash11(flameChance * 37.0) * 0.40,
+                            (hash11(flameChance * 53.0) - 0.5) * 0.16
                         );
                     }
                 } else if (phase < 0.42) {
@@ -215,11 +243,11 @@ void main() {
                 } else {
                     float randDetach = hash31(vec3(pos.xz * 19.0, burnStartTime));
 
-                    if (randDetach < 0.55) {
+                    if (randDetach < 0.28) {
                         p.type = TYPE_ASH;
                         p.maxLifetime = 2.2 + hash11(randDetach * 91.0) * 2.0;
                         p.lifetime = p.maxLifetime;
-                        p.color = vec4(0.08, 0.075, 0.068, 0.65);
+                        p.color = vec4(0.16, 0.15, 0.14, 0.45);
                         p.position.w *= 0.9;
                         vel += vec3(
                             (hash11(randDetach * 15.0) - 0.5) * 0.45,

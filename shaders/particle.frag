@@ -38,12 +38,15 @@ void main() {
     float alpha = 1.0 - r;
 
     if (fs_in.type == 1u) { // FIRE
-        float core = smoothstep(0.70, 0.0, r);
-        float glow = smoothstep(1.0, 0.16, r);
-        color.rgb = mix(color.rgb * 0.70, vec3(1.35, 0.82, 0.24), core);
-        alpha = glow * 0.72 + core * 0.28;
+        // Núcleo brillante + halo muy suave. Alpha bajo para que las
+        // partículas se acumulen aditivamente y formen una masa continua
+        // en vez de discos separados.
+        float core = smoothstep(0.55, 0.0, r);
+        float glow = smoothstep(1.0, 0.10, r);
+        color.rgb = mix(color.rgb * 0.85, vec3(1.4, 0.85, 0.28), core);
+        alpha = glow * 0.28 + core * 0.30;
     } else if (fs_in.type == 3u) { // SMOKE
-        alpha = pow(alpha, 1.8) * 0.36;
+        alpha = pow(alpha, 2.2) * 0.16;
         color.rgb *= 0.75;
     } else if (fs_in.type == 5u) { // SPARK
         alpha = pow(alpha, 3.2);

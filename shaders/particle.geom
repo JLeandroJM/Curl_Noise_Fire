@@ -29,9 +29,9 @@ void main() {
     float size = gs_in[0].size;
 
     if (gs_in[0].type == 1u) { // FIRE
-        size *= 2.6;
+        size *= 1.7;
     } else if (gs_in[0].type == 3u) { // SMOKE
-        size *= 3.2;
+        size *= 2.0;
     } else if (gs_in[0].type == 4u) { // ASH
         size *= 0.7;
     } else if (gs_in[0].type == 5u) { // SPARK
