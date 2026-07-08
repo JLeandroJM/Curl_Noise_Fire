@@ -1,0 +1,163 @@
+#include "Scene.h"
+#include <random>
+#include <glm/gtc/matrix_transform.hpp>
+
+namespace GeometryUtils {
+
+static float randomFloat(float min, float max) {
+    static std::mt19937 gen(std::random_device{}());
+    std::uniform_real_distribution<float> dist(min, max);
+    return dist(gen);
+}
+
+void generatePlane(std::vector<Particle>& particles,
+                   const glm::vec3& center,
+                   const glm::vec3& u_dir, float u_size, int u_count,
+                   const glm::vec3& v_dir, float v_size, int v_count,
+                   uint32_t type, const glm::vec4& color, float pSize) {
+    glm::vec3 start = center - u_dir * (u_size * 0.5f) - v_dir * (v_size * 0.5f);
+    float u_step = u_count > 1 ? u_size / (u_count - 1) : 0;
+    float v_step = v_count > 1 ? v_size / (v_count - 1) : 0;
+
+    for (int i = 0; i < u_count; ++i) {
+        for (int j = 0; j < v_count; ++j) {
+            Particle p{};
+            glm::vec3 pos = start + u_dir * (i * u_step) + v_dir * (j * v_step);
+            p.position = glm::vec4(pos, pSize);
+            p.velocity = glm::vec4(0.0f);
+            p.color = color;
+            p.lifetime = 0.0f;
+            p.maxLifetime = -1.0f; // Estático
+            p.temperature = 0.0f;
+            p.type = type;
+            particles.push_back(p);
+        }
+    }
+}
+
+void generateCylinder(std::vector<Particle>& particles,
+                      const glm::vec3& base, const glm::vec3& dir,
+                      float radius, float height, int radial_count, int height_count,
+                      uint32_t type, const glm::vec4& color, float pSize) {
+    glm::vec3 up = glm::normalize(dir);
+    glm::vec3 right = glm::vec3(1, 0, 0);
+    if (std::abs(glm::dot(up, right)) > 0.99f) {
+        right = glm::vec3(0, 1, 0);
+    }
+    glm::vec3 forward = glm::normalize(glm::cross(up, right));
+    right = glm::cross(forward, up);
+
+    float h_step = height_count > 1 ? height / (height_count - 1) : 0;
+    
+    for (int i = 0; i < height_count; ++i) {
+        glm::vec3 center = base + up * (i * h_step);
+        for (int j = 0; j < radial_count; ++j) {
+            float angle = (float)j / radial_count * glm::two_pi<float>();
+            glm::vec3 pos = center + right * std::cos(angle) * radius + forward * std::sin(angle) * radius;
+            
+            Particle p{};
+            p.position = glm::vec4(pos, pSize);
+            p.velocity = glm::vec4(0.0f);
+            p.color = color;
+            p.lifetime = 0.0f;
+            p.maxLifetime = -1.0f;
+            p.temperature = 0.0f;
+            p.type = type;
+            particles.push_back(p);
+        }
+    }
+}
+
+void generateSphere(std::vector<Particle>& particles,
+                    const glm::vec3& center, float radius, int count,
+                    uint32_t type, const glm::vec4& color, float pSize) {
+    for (int i = 0; i < count; ++i) {
+        // Puntos aleatorios en una esfera
+        float theta = randomFloat(0.0f, glm::two_pi<float>());
+        float phi = std::acos(randomFloat(-1.0f, 1.0f));
+        float r = radius * std::cbrt(randomFloat(0.0f, 1.0f));
+
+        glm::vec3 pos = center + glm::vec3(
+            r * std::sin(phi) * std::cos(theta),
+            r * std::sin(phi) * std::sin(theta),
+            r * std::cos(phi)
+        );
+
+        Particle p{};
+        p.position = glm::vec4(pos, pSize);
+        p.velocity = glm::vec4(0.0f);
+        p.color = color;
+        p.lifetime = 0.0f;
+        p.maxLifetime = -1.0f;
+        p.temperature = 0.0f;
+        p.type = type;
+        particles.push_back(p);
+    }
+}
+
+void computeBurnTimes(std::vector<Particle>& particles,
+                      const std::vector<glm::vec3>& ignitionPoints,
+                      float burnSpeed, float randomVariation) {
+    for (auto& p : particles) {
+        if (p.type == TYPE_DEAD || p.maxLifetime > 0.0f) continue;
+
+        float minDist = std::numeric_limits<float>::max();
+        glm::vec3 pos(p.position);
+        for (const auto& ip : ignitionPoints) {
+            float dist = glm::distance(pos, ip);
+            if (dist < minDist) minDist = dist;
+        }
+
+        float burnStart = minDist / burnSpeed + randomFloat(0.0f, randomVariation);
+        // Guardamos burnStartTime en p.velocity.w
+        p.velocity.w = burnStart;
+    }
+}
+
+void generateBox(std::vector<Particle>& particles,
+                 const glm::vec3& center, const glm::vec3& size,
+                 int countX, int countY, int countZ,
+                 uint32_t type, const glm::vec4& color, float pSize) {
+    glm::vec3 start = center - size * 0.5f;
+    float stepX = countX > 1 ? size.x / (countX - 1) : 0;
+    float stepY = countY > 1 ? size.y / (countY - 1) : 0;
+    float stepZ = countZ > 1 ? size.z / (countZ - 1) : 0;
+
+    for (int i = 0; i < countX; ++i) {
+        for (int j = 0; j < countY; ++j) {
+            for (int k = 0; k < countZ; ++k) {
+                glm::vec3 pos = start + glm::vec3(i * stepX, j * stepY, k * stepZ);
+                Particle p{};
+                p.position = glm::vec4(pos, pSize);
+                p.velocity = glm::vec4(0.0f);
+                p.color = color;
+                p.lifetime = 0.0f;
+                p.maxLifetime = -1.0f;
+                p.temperature = 0.0f;
+                p.type = type;
+                particles.push_back(p);
+            }
+        }
+    }
+}
+
+void generateLine(std::vector<Particle>& particles,
+                  const glm::vec3& start, const glm::vec3& end, int count,
+                  uint32_t type, const glm::vec4& color, float pSize) {
+    glm::vec3 dir = end - start;
+    for (int i = 0; i < count; ++i) {
+        float t = count > 1 ? (float)i / (count - 1) : 0.0f;
+        glm::vec3 pos = start + dir * t;
+        Particle p{};
+        p.position = glm::vec4(pos, pSize);
+        p.velocity = glm::vec4(0.0f);
+        p.color = color;
+        p.lifetime = 0.0f;
+        p.maxLifetime = -1.0f;
+        p.temperature = 0.0f;
+        p.type = type;
+        particles.push_back(p);
+    }
+}
+
+} // namespace GeometryUtils
